@@ -13,6 +13,15 @@ if not defined PY (
   exit /b 1
 )
 
+%PY% -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)" >nul 2>nul
+if errorlevel 1 (
+  echo Python 3.12 or newer is required, your version is older.
+  echo Install the latest Python from https://www.python.org/downloads/ and tick "Add python.exe to PATH",
+  echo then run start.bat again.
+  pause
+  exit /b 1
+)
+
 if not exist ".venv\Scripts\python.exe" (
   echo First run: creating the Python environment, this takes a couple of minutes...
   %PY% -m venv .venv
