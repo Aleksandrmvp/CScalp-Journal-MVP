@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Secrets & local config — NEVER commit these
+telegram.json
+ctrader.json
+cscalp_settings.json
+.env
+
+# Local trading data / DB
+data/
+*.sqlite
+*.sqlite-*
+*.xlsx
+
+# Backups, logs, temp
+*.bak
+*.log
+*.tmp
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Release archives
+dist/

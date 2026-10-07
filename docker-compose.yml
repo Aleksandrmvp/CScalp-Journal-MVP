@@ -1,0 +1,19 @@
+services:
+  journal:
+    build: .
+    image: cscalp-journal
+    container_name: cscalp-journal
+    restart: unless-stopped
+    ports:
+      - "${CSCALP_WEB_PORT:-8777}:8777"
+    environment:
+      TZ: ${TZ:-Europe/Moscow}
+      # Telegram is optional; leave blank to disable. See .env.example.
+      TG_TOKEN: ${TG_TOKEN:-}
+      TG_CHAT_ID: ${TG_CHAT_ID:-}
+    volumes:
+      # Terminal HTML debug logs, read-only. Override the host path in .env
+      # (CSCALP_LOG_ROOT_HOST) if your FSR Launcher install lives elsewhere.
+      - "${CSCALP_LOG_ROOT_HOST:-C:/Program Files (x86)/FSR Launcher/SubApps/CS/Log}:/logs:ro"
+      # Durable SQLite archive (survives container rebuilds).
+      - "./data:/data"

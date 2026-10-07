@@ -1,0 +1,11 @@
+.venv/
+venv/
+data/
+memory/
+.git/
+**/__pycache__/
+*.pyc
+*.pyo
+*.bak
+*.log
+telegram.json

@@ -1,0 +1,24 @@
+{
+  "log_root": "C:/Program Files (x86)/FSR Launcher/SubApps/CS/Log",
+  "instruments": {
+    "Si":      {"step": 1.0,   "step_value": 1.0},
+    "GOLD":    {"step": 0.1,   "step_value": 8.43414},
+    "GLDRUBF": {"step": 0.1,   "step_value": 0.1},
+    "USDRUBF": {"step": 0.01,  "step_value": 10.0},
+    "CNYRUBF": {"step": 0.001, "step_value": 1.0},
+    "EURRUBF": {"step": 0.01,  "step_value": 10.0},
+    "CNY":     {"step": 0.001, "step_value": 1.0}
+  },
+  "commission": {
+    "clearing_per_lot": 0.18,
+    "taker_multiplier": 1.8,
+    "reg_fee": {
+      "Si": 3.08,
+      "USDRUBF": 2.93,
+      "GLDRUBF": 1.53,
+      "CNYRUBF": 0.52,
+      "CNY": 0.78,
+      "UCNY": 2.07
+    }
+  }
+}
