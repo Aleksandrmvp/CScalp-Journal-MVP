@@ -1,0 +1,2 @@
+# keep Windows line endings for the launcher even in ZIP downloads
+*.bat text eol=crlf

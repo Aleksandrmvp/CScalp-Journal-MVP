@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 DIRS = ["cscalp_journal", "docs", "prototype"]
-FILES = ["README.md", "README.en.md", "LICENSE", "requirements.txt", "start.bat", "Dockerfile",
+FILES = [".gitattributes", "README.md", "README.en.md", "LICENSE", "requirements.txt", "start.bat", "Dockerfile",
          "docker-compose.yml", ".dockerignore", ".gitignore", ".env.example", "telegram.json.example",
          "ctrader.json.example", "cscalp_settings.example.json", "make_release.py"]
 SKIP_PARTS = {"__pycache__"}
