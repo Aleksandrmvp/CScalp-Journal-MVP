@@ -40,6 +40,16 @@ REPORT_PAGE = r"""<!doctype html>
  textarea{width:100%;background:var(--input);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:8px;font:inherit}
  .formwrap{max-width:980px;margin:0 auto;padding:0 16px 40px}
  summary{cursor:pointer}
+ .hero .card,.trio .card,.tiles .card{position:relative;overflow:hidden;transform-style:preserve-3d;
+   transition:transform .25s ease,box-shadow .25s ease,border-color .25s ease;will-change:transform}
+ .card.tilt{transform:perspective(900px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg))}
+ .card.tilt:hover{box-shadow:0 18px 38px rgba(0,0,0,.34),0 2px 0 rgba(255,255,255,.05) inset;border-color:var(--accent)}
+ .card .glare{position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;transition:opacity .25s;
+   background:radial-gradient(circle at var(--gx,50%) var(--gy,0%),rgba(255,255,255,.16),transparent 55%)}
+ .card.tilt:hover .glare{opacity:1}
+ @keyframes cardIn{from{opacity:0;transform:perspective(900px) translateY(20px) rotateX(12deg)}to{opacity:1;transform:perspective(900px) translateY(0) rotateX(0)}}
+ .card.enter{animation:cardIn .65s cubic-bezier(.2,.7,.2,1) backwards;animation-delay:calc(var(--i,0)*70ms)}
+ @media (prefers-reduced-motion:reduce){.card.enter{animation:none}.card.tilt{transform:none!important;transition:none}}
  .foot{font-size:11px;color:var(--mut);line-height:1.6}
  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
  .warn{color:#e0a95f}
@@ -168,6 +178,42 @@ function capSection(c){
   <div class="card"><div class="lbl">Капитал и просадка с начала учёта</div>${capChart(c)}<div class="sm">сплошная — капитал, синий пунктир — стартовый капитал (от него считается просадка), оранжевый — пик (справочно), красная заливка — просадка ниже старта. Метка «ПЕРЕЛИВ» — день, когда прибыль рублёвой ноги компенсирована убытком форекс-ноги. Отсчёт с ${dmy(c.first_day)}: до 24.09 по выписке брокера, дальше по активам терминала.${c.flows&&(c.flows.withdrawals||c.flows.deposits)?`<br>Переводы с ${dmy(c.flows.since)}: ${c.flows.deposits?'пополнения '+sgn(c.flows.deposits)+' ₽, ':''}выводы ${sgn(c.flows.withdrawals)} ₽ — они входят в просадку. Результат фандинга, комиссий и торговли за это время: ${sgn(c.flows.performance)} ₽.`:''}</div></div>`;
 }
 
+const STAT_CARDS='#root .hero .card,#root .trio .card,#root .tiles .card';
+const REDUCED=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+function countUp(el){
+  const m=el.textContent.trim().match(/^([+−-]?)(\d(?:[\d\s\u00a0]*\d)?)(?:,(\d+))?(\s*(?:₽|%|USDT|п\.).*)?$/);
+  if(!m)return;
+  const dec=m[3]?m[3].length:0, tail=m[4]||'';
+  const target=parseFloat(m[2].replace(/[\s\u00a0]/g,'')+(m[3]?'.'+m[3]:''));
+  if(!isFinite(target)||target===0)return;
+  const fin=el.textContent, t0=performance.now(), dur=900;
+  setTimeout(()=>{el.textContent=fin},dur+400);   // safety net if animation frames are throttled
+  const fmtv=v=>m[1]+v.toLocaleString('ru-RU',{minimumFractionDigits:dec,maximumFractionDigits:dec})+tail;
+  (function step(now){
+    const k=Math.min(1,(now-t0)/dur), e=1-Math.pow(1-k,3);
+    el.textContent=k<1?fmtv(target*e):fin;
+    if(k<1)requestAnimationFrame(step);
+  })(t0);
+}
+function fx3d(first){
+  document.querySelectorAll(STAT_CARDS).forEach((c,i)=>{
+    c.classList.add('tilt');
+    if(!c.querySelector('.glare')){const g=document.createElement('div');g.className='glare';c.appendChild(g);}
+    if(first&&!REDUCED&&document.visibilityState==='visible'){
+      c.style.setProperty('--i',i);c.classList.add('enter');
+      c.querySelectorAll('.big,.mid,.val').forEach(countUp);
+    }
+    if(REDUCED)return;
+    c.addEventListener('mousemove',ev=>{
+      const r=c.getBoundingClientRect(), x=(ev.clientX-r.left)/r.width, y=(ev.clientY-r.top)/r.height;
+      c.style.setProperty('--ry',((x-.5)*12).toFixed(2)+'deg');
+      c.style.setProperty('--rx',((.5-y)*10).toFixed(2)+'deg');
+      c.style.setProperty('--gx',(x*100).toFixed(0)+'%');c.style.setProperty('--gy',(y*100).toFixed(0)+'%');
+    });
+    c.addEventListener('mouseleave',()=>{c.style.setProperty('--rx','0deg');c.style.setProperty('--ry','0deg');});
+  });
+}
+let _fxMonth=null;
 function render(d){
   const root=document.getElementById('root');
   const sel=document.getElementById('month');
@@ -210,6 +256,8 @@ function render(d){
   </div>
   <div class="foot">${d.source==='ledger'?'За этот период терминал не писал логи, поэтому результат собран из выписки брокера: фандинг, комиссии (перенос и доля проп-фирмы PayOut), прибыль и убыток по счёту. Переводы между счетами в доходность не входят; процент считается от капитала на начало месяца. Капитал по дням восстановлен от текущего значения.':`Капитал, доходность, просадка, win rate и profit factor считаются по дневным снимкам «активов» терминала. Это лимит с плечом ×10: реальный капитал равен активам ÷ 10, коэффициент подбирается по вашему «Сейчас». Изменение капитала складывается из фандинга, комиссий за перенос и списаний убытка из выписки брокера; чтобы цифры были полными, загружайте новые строки выписки. «Реализовано по сделкам» дано справочно: оно восстановлено из исполнений MOEX-ноги, парная нога на форексе в CScalp не видна. Пополнения и выводы со счёта отчёт не отделяет.`}${t.points_mixed.length?`<br><span class="warn">Нет стоимости шага для: ${t.points_mixed.map(esc).join(', ')} — их PnL в пунктах, а не в рублях.</span>`:''} Прошлые результаты не гарантируют будущих.</div>`;
   root.innerHTML=h;
+  const firstShow=_fxMonth!==d.month; _fxMonth=d.month;
+  fx3d(firstShow);
 }
 
 async function load(m){
