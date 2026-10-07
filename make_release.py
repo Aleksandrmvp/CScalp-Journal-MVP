@@ -1,6 +1,6 @@
 """Build a clean zip for sharing:  python make_release.py  ->  dist/cscalp-journal-YYYY-MM-DD.zip
 
-Only whitelisted files go in (no database, keys, tokens, statements or personal photo), and the
+Only whitelisted files go in (no database, keys, tokens or statements), and the
 archive is scanned for the local secrets before it is kept.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ FILES = [".gitattributes", "README.md", "README.en.md", "LICENSE", "requirements
          "docker-compose.yml", ".dockerignore", ".gitignore", ".env.example", "telegram.json.example",
          "ctrader.json.example", "cscalp_settings.example.json", "make_release.py"]
 SKIP_PARTS = {"__pycache__"}
-SKIP_NAMES = {"bg.jpg"}                       # personal photo: students drop in their own
+SKIP_NAMES: set[str] = set()
 SKIP_SUFFIXES = {".pyc", ".sqlite", ".xlsx"}
 FORBIDDEN = {"ctrader.json", "telegram.json", ".env", "ctrader_token.json", "cscalp_settings.json"}
 
