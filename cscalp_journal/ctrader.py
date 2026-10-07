@@ -10,6 +10,7 @@ which is how cTrader's own statement computes it.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
@@ -89,6 +90,7 @@ def access_token() -> str | None:
 def status(con) -> dict:
     last = db.get_setting(con, "ctrader_last_result")
     return {"configured": is_configured(), "connected": _load_token() is not None,
+            "library": importlib.util.find_spec("ctrader_open_api") is not None,
             "last_sync": db.get_setting(con, "ctrader_last_sync"),
             "last_result": json.loads(last) if last else None, "redirect_uri": REDIRECT_URI}
 

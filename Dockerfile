@@ -14,8 +14,8 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt requirements-ctrader.txt ./
+RUN pip install --no-cache-dir -r requirements.txt     && (pip install --no-cache-dir -r requirements-ctrader.txt || echo "cTrader module skipped")
 
 COPY cscalp_journal ./cscalp_journal
 

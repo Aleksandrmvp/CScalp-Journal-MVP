@@ -293,6 +293,7 @@ async function ctLoad(){
   try{
     const s=await (await fetch('/api/ctrader/status')).json();
     const r=s.last_result, when=s.last_sync?s.last_sync.slice(8,10)+'.'+s.last_sync.slice(5,7)+' '+s.last_sync.slice(11,16):'';
+    if(!s.library){el.textContent='Модуль cTrader не установлен на этом Python. Дневник работает без автоподтяжки форекса.';return}
     if(!s.configured){el.textContent='В файле ctrader.json нет client_id и client_secret.';return}
     if(!s.connected){el.textContent='Не подключено. Нажмите «Подключить cTrader» и разрешите доступ в своём cTrader ID.';return}
     if(!r){el.textContent='Подключено, синхронизации ещё не было.';return}

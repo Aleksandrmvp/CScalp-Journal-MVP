@@ -38,6 +38,17 @@ if errorlevel 1 (
   exit /b 1
 )
 
+rem cTrader support is optional: the journal works without it
+".venv\Scripts\python.exe" -c "import ctrader_open_api" >nul 2>nul
+if errorlevel 1 (
+  echo Installing the optional cTrader module...
+  ".venv\Scripts\python.exe" -m pip install -q -r requirements-ctrader.txt >nul 2>nul
+  if errorlevel 1 (
+    ".venv\Scripts\python.exe" -m pip install -q --no-deps -r requirements-ctrader-nodeps.txt >nul 2>nul
+    if errorlevel 1 echo The cTrader module could not be installed. The journal works without it.
+  )
+)
+
 if not defined CSCALP_WEB_PORT set "CSCALP_WEB_PORT=8777"
 echo Loading history from the terminal logs...
 ".venv\Scripts\python.exe" -m cscalp_journal.ingest
