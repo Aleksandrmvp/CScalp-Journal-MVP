@@ -350,6 +350,16 @@ _PAGE = r"""<!doctype html>
  .selcount{color:var(--accent)}
  .venue{font-size:11px;color:var(--mut)}
  .chk{width:16px}
+ td.chkcell{cursor:pointer;user-select:none;width:30px}
+ tr.picked td{background:rgba(95,159,224,.22)}
+ tr.inb td{background:rgba(232,235,243,.92);color:#14171f;border-bottom-color:#c4c9d6}
+ tr.inb .mut{color:#5d6479} tr.inb .buy{color:#0d6b3f} tr.inb .sell{color:#b3302c}
+ tr.inb .tag{border-color:#8f97ab;color:#2f3548} tr.inb a.tag{color:#1b4fbf;border-color:#1b4fbf!important}
+ tr.inb.picked td{background:rgba(120,175,240,.75)}
+ :root[data-theme="light"] tr.inb td{background:#202637;color:#eef0f4;border-bottom-color:#323a50}
+ :root[data-theme="light"] tr.inb .mut{color:#a3abc2} :root[data-theme="light"] tr.inb .buy{color:#58d49a}
+ :root[data-theme="light"] tr.inb .sell{color:#ff8a86}
+ :root[data-theme="light"] tr.inb .tag{color:#d7dcea;border-color:#6a7390} :root[data-theme="light"] tr.inb a.tag{color:#8db8ff;border-color:#8db8ff!important}
 </style></head>
 <body>
 <header>
@@ -378,6 +388,9 @@ _PAGE = r"""<!doctype html>
      <label class=mut>Сторона <select id="fSide" onchange="setJF('side',this.value)"><option value="">все</option><option>Buy</option><option>Sell</option></select></label>
      <label class=mut>Ликвидность <select id="fLiq" onchange="setJF('liq',this.value)"><option value="">все</option><option>maker</option><option>taker</option><option>unknown</option></select></label>
      <button onclick="resetJF()">сбросить</button>
+     <button onclick="selAllNew()" title="Отметить все новые сделки по текущему фильтру на всех страницах">выбрать все новые</button>
+     <button onclick="selClear()">снять выделение</button>
+     <span class=mut title="Светлые строки уже добавлены в связку">▪ светлые строки — уже в связке</span>
      <span class=mut id="jcount"></span>
      <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
        <label class=mut>На странице <select id="fPage" onchange="setPageSize(this.value)"><option>50</option><option>100</option></select></label>
@@ -420,7 +433,39 @@ function renderPositions(rows){
   positions.innerHTML=h+'</table>';
 }
 
-function toggleSel(id,el){ if(el.checked)sel.add(id); else sel.delete(id); selc.textContent=sel.size; }
+let drag=null,lastPick=null;
+function pickRow(tr,state){
+  const id=tr.dataset.id; if(!id)return;
+  if(state)sel.add(id); else sel.delete(id);
+  tr.classList.toggle('picked',state);
+  const cb=tr.querySelector('input.chk'); if(cb)cb.checked=state;
+  selc.textContent=sel.size;
+}
+function syncSelAll(){
+  const rows=[...journal.querySelectorAll('tr[data-id]:not(.inb)')], box=document.getElementById('selAll');
+  if(box)box.checked=rows.length>0&&rows.every(r=>sel.has(r.dataset.id));
+}
+function selPage(on){ journal.querySelectorAll('tr[data-id]:not(.inb)').forEach(tr=>pickRow(tr,on)); }
+function selAllNew(){
+  JOURNAL.filter(matchJF).filter(r=>r.event==='FILL'&&r.id&&!(r.bundles||[]).length).forEach(r=>sel.add(r.id));
+  selc.textContent=sel.size; _lastJournalJson=''; renderJournal();
+}
+function selClear(){ sel.clear(); selc.textContent=0; _lastJournalJson=''; renderJournal(); }
+document.getElementById('journal').addEventListener('mousedown',ev=>{
+  const td=ev.target.closest('td.chkcell'); if(!td||ev.button!==0)return;
+  const tr=td.parentElement, state=!sel.has(tr.dataset.id);
+  ev.preventDefault();
+  if(ev.shiftKey&&lastPick&&lastPick!==tr&&lastPick.isConnected){
+    const rows=[...journal.querySelectorAll('tr[data-id]')], a=rows.indexOf(lastPick), b=rows.indexOf(tr);
+    rows.slice(Math.min(a,b),Math.max(a,b)+1).forEach(r=>pickRow(r,state));
+  } else pickRow(tr,state);
+  drag={state}; lastPick=tr; syncSelAll();
+});
+document.getElementById('journal').addEventListener('mouseover',ev=>{
+  if(!drag||ev.buttons!==1)return;
+  const tr=ev.target.closest('tr[data-id]'); if(tr){pickRow(tr,drag.state); lastPick=tr; syncSelAll();}
+});
+document.addEventListener('mouseup',()=>{drag=null});
 
 let JOURNAL=[];
 const jf={ticker:'',event:'FILL',side:'',liq:''};
@@ -459,15 +504,17 @@ function renderJournal(){
   document.getElementById('jcount').textContent=`показано: ${total} из ${JOURNAL.length}`;
   document.getElementById('jpageinfo').textContent=`стр ${jpage}/${pages}`;
   if(!rows.length){journal.innerHTML='<div class="mut">нет событий по фильтру</div>';return}
-  let h='<table><tr><th class=chk></th><th class=l>Инструмент</th><th class=l>Время</th><th class=l>Событие</th><th class=l>Сторона</th><th>Цена</th><th>Кол-во</th><th class=l>Ликвидность</th><th class=l>Связка</th></tr>';
+  let h='<table><tr><th class=chk><input type=checkbox id=selAll title="Выбрать все новые сделки на странице" onchange="selPage(this.checked)"></th><th class=l>Инструмент</th><th class=l>Связка</th><th class=l>Время</th><th class=l>Событие</th><th class=l>Сторона</th><th>Цена</th><th>Кол-во</th><th class=l>Ликвидность</th></tr>';
   for(const r of rows){
-    const t=(r.ts.split(' ')[1]||r.ts);
+    const [dpart,tpart]=r.ts.split(' '); const t=`<span class=mut>${dpart.slice(8,10)}.${dpart.slice(5,7)}.${dpart.slice(2,4)}</span> ${tpart||''}`;
+    const bundled=(r.bundles||[]).length>0, picked=r.id&&sel.has(r.id);
     const liq=r.liquidity?`<span class="tag ${r.liquidity}">${r.liquidity}</span>`:'';
-    const chk=r.event==='FILL'&&r.id?`<input type=checkbox class=chk ${sel.has(r.id)?'checked':''} onchange="toggleSel('${r.id}',this)">`:'';
+    const chk=r.event==='FILL'&&r.id?`<input type=checkbox class=chk tabindex=-1 ${sel.has(r.id)?'checked':''}>`:'';
     const bnd=(r.bundles||[]).map(b=>`<a href="/bundle/${b.id}" class="tag" style="border-color:var(--accent)">${b.name}</a>`).join(' ');
-    h+=`<tr><td>${chk}</td><td class=l>${r.ticker}</td><td class=l>${t}</td><td class=l>${r.event}</td><td class="l ${sideCls(r.side)}">${r.side||''}</td><td>${fmt(r.price)}</td><td>${fmt(r.qty)}</td><td class=l>${liq}</td><td class=l>${bnd}</td></tr>`;
+    h+=`<tr${r.event==='FILL'&&r.id?` data-id="${r.id}"`:''} class="${bundled?'inb':''} ${picked?'picked':''}"><td class="${chk?'chkcell':''}">${chk}</td><td class=l>${r.ticker}</td><td class=l>${bnd}</td><td class=l>${t}</td><td class=l>${r.event}</td><td class="l ${sideCls(r.side)}">${r.side||''}</td><td>${fmt(r.price)}</td><td>${fmt(r.qty)}</td><td class=l>${liq}</td></tr>`;
   }
   journal.innerHTML=h+'</table>';
+  syncSelAll();
 }
 
 const STAT={open:['Открыта','--reduce'],closed:['Закрыта','--mut']};
