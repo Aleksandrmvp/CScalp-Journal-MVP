@@ -351,6 +351,8 @@ _PAGE = r"""<!doctype html>
  .venue{font-size:11px;color:var(--mut)}
  .chk{width:16px}
  td.chkcell{cursor:pointer;user-select:none;width:30px}
+ table.compact{width:auto;min-width:0}
+ table.compact th,table.compact td{padding:3px 9px}
  tr.picked td{background:rgba(95,159,224,.22)}
  tr.inb td{background:rgba(232,235,243,.92);color:#14171f;border-bottom-color:#c4c9d6}
  tr.inb .mut{color:#5d6479} tr.inb .buy{color:#0d6b3f} tr.inb .sell{color:#b3302c}
@@ -504,7 +506,7 @@ function renderJournal(){
   document.getElementById('jcount').textContent=`показано: ${total} из ${JOURNAL.length}`;
   document.getElementById('jpageinfo').textContent=`стр ${jpage}/${pages}`;
   if(!rows.length){journal.innerHTML='<div class="mut">нет событий по фильтру</div>';return}
-  let h='<table><tr><th class=chk><input type=checkbox id=selAll title="Выбрать все новые сделки на странице" onchange="selPage(this.checked)"></th><th class=l>Инструмент</th><th class=l>Связка</th><th class=l>Время</th><th class=l>Событие</th><th class=l>Сторона</th><th>Цена</th><th>Кол-во</th><th class=l>Ликвидность</th></tr>';
+  let h='<table class=compact><tr><th class=chk><input type=checkbox id=selAll title="Выбрать все новые сделки на странице" onchange="selPage(this.checked)"></th><th class=l>Инструмент</th><th class=l>Связка</th><th class=l>Время</th><th class=l>Событие</th><th class=l>Сторона</th><th>Цена</th><th>Кол-во</th><th class=l>Ликвидность</th></tr>';
   for(const r of rows){
     const [dpart,tpart]=r.ts.split(' '); const t=`<span class=mut>${dpart.slice(8,10)}.${dpart.slice(5,7)}.${dpart.slice(2,4)}</span> ${tpart||''}`;
     const bundled=(r.bundles||[]).length>0, picked=r.id&&sel.has(r.id);
