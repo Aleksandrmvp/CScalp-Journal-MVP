@@ -41,7 +41,7 @@ def build_html(con) -> str:
     css += "html{background:var(--bg)}\n"
 
     script = REPORT_PAGE[REPORT_PAGE.rindex("<script>") + len("<script>"):REPORT_PAGE.rindex("</script>")]
-    head = script.split("async function load(m){", 1)[0]
+    head = script.split("async function load(m){", 1)[0].replace("let EDITABLE=true;", "let EDITABLE=false;")
     script = (head
               + "const DATA=" + payload + ";\n"
               + "function load(m){const k=m||cur||Object.keys(DATA).slice(-1)[0];cur=k;render(DATA[k]);}\n"

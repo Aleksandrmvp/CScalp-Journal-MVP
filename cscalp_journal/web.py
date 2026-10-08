@@ -7,6 +7,7 @@ Background ingest loop tails today's logs into SQLite; dashboard at :8777.
 from __future__ import annotations
 
 import html
+import math
 import threading
 
 import uvicorn
@@ -17,7 +18,7 @@ from pydantic import BaseModel
 import re
 
 
-from . import config, ctrader, db, ingest, notify, report, telegram, views
+from . import config, ctrader, db, forex, ingest, notify, report, telegram, views
 from .report_page import REPORT_PAGE
 from .theme import BG_PATH, with_photo
 
@@ -212,6 +213,47 @@ def api_report_capital(c: Capital):
         raise HTTPException(400, "peak_month must be YYYY-MM")
     report.set_capital(db.connect(), c.start, c.current, c.peak, c.peak_month)
     return {"ok": True}
+
+
+class ForexResultIn(BaseModel):
+    day: str
+    usd: float
+    rub: float | None = None
+    note: str | None = None
+
+
+@app.post("/api/report/forex-result")
+def api_forex_add(r: ForexResultIn):
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", r.day):
+        raise HTTPException(400, "day must be YYYY-MM-DD")
+    if not math.isfinite(r.usd) or r.usd == 0 or (r.rub is not None and not math.isfinite(r.rub)):
+        raise HTTPException(400, "usd must be a non-zero number")
+    try:
+        return {"ok": True, **forex.add_result(db.connect(), r.day, r.usd, (r.note or "").strip()[:200], r.rub)}
+    except ValueError:
+        raise HTTPException(400, "bad date")
+
+
+@app.delete("/api/report/forex-result/{rid:path}")
+def api_forex_delete(rid: str):
+    if not forex.delete_result(db.connect(), rid):
+        raise HTTPException(404, "not found or not a manual entry")
+    return {"ok": True}
+
+
+@app.delete("/api/report/cash/{rid}")
+def api_cash_delete(rid: int):
+    if not report.delete_cash(db.connect(), rid):
+        raise HTTPException(404, "not found")
+    return {"ok": True}
+
+
+@app.post("/api/report/cash/{rid}/toggle")
+def api_cash_toggle(rid: int):
+    kind = report.toggle_exclude_cash(db.connect(), rid)
+    if kind is None:
+        raise HTTPException(404, "not found")
+    return {"ok": True, "kind": kind}
 
 
 class CashText(BaseModel):

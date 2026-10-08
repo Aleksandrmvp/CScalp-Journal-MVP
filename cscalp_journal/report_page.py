@@ -50,6 +50,7 @@ REPORT_PAGE = r"""<!doctype html>
  @keyframes cardIn{from{opacity:0;transform:perspective(900px) translateY(20px) rotateX(12deg)}to{opacity:1;transform:perspective(900px) translateY(0) rotateX(0)}}
  .card.enter{animation:cardIn .65s cubic-bezier(.2,.7,.2,1) backwards;animation-delay:calc(var(--i,0)*70ms)}
  @media (prefers-reduced-motion:reduce){.card.enter{animation:none}.card.tilt{transform:none!important;transition:none}}
+ .mini{padding:2px 8px;font-size:11px;white-space:nowrap}
  .foot{font-size:11px;color:var(--mut);line-height:1.6}
  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
  .warn{color:#e0a95f}
@@ -74,8 +75,12 @@ REPORT_PAGE = r"""<!doctype html>
  <div id="ctStatus" class="sm">…</div>
  <div class="row" style="margin-top:8px"><a href="/ctrader/connect"><button>Подключить cTrader</button></a><button onclick="ctSync()">Синхронизировать сейчас</button></div>
 </div></div>
+<div class="formwrap" style="padding-bottom:14px"><details class="card"><summary class="lbl" style="margin:0">Добавить форекс-результат</summary>
+ <p class="sm">Результат форекс-ноги за день в USDT (убыток со знаком минус). Рубли считаются по курсу ЦБ на эту дату. Чтобы зафиксировать рублёвую сумму (например, чтобы нога точно совпала с рублёвой), заполните «Сумма в ₽».</p>
+ <div class="row"><input id="fxDay" type="date" title="Дата результата"><input id="fxUsd" placeholder="USDT, например -2100" inputmode="decimal"><input id="fxRub" placeholder="сумма в ₽ (по желанию)" inputmode="decimal"><input id="fxNote" placeholder="комментарий" style="width:200px"><button onclick="fxAdd()">Добавить</button><span id="fxMsg" class="mut"></span></div>
+</details></div>
 <div class="formwrap"><details class="card"><summary class="lbl" style="margin:0">Добавить движения по счёту</summary>
- <p class="sm">Вставьте строки из выписки брокера: дата проводки, сумма, описание (фандинг, комиссия за перенос, списание убытка). Повторы пропускаются.</p>
+ <p class="sm">Вставьте строки из выписки брокера: дата проводки, сумма, описание (фандинг, комиссия за перенос, списание убытка). Повторы пропускаются. Строка со словом «Корректировка» учитывается только в статистике и в капитал не входит. Строки «Перевод средств» считаются переводами между счетами и в прибыль не входят. Любую запись можно исключить из статистики или удалить в таблице «Движения по счёту» выше.</p>
  <textarea id="cashText" rows="6" placeholder="2026-10-06  1 495 ₽  Зачисление фандинга за 05.10.2026"></textarea>
  <div class="row" style="margin-top:8px"><button onclick="saveCash()">Добавить</button><span id="cashMsg" class="mut"></span></div>
 </details></div>
@@ -178,6 +183,7 @@ function capSection(c){
   <div class="card"><div class="lbl">Капитал и просадка с начала учёта</div>${capChart(c)}<div class="sm">сплошная — капитал, синий пунктир — стартовый капитал (от него считается просадка), оранжевый — пик (справочно), красная заливка — просадка ниже старта. Метка «ПЕРЕЛИВ» — день, когда прибыль рублёвой ноги компенсирована убытком форекс-ноги. Отсчёт с ${dmy(c.first_day)}: до 24.09 по выписке брокера, дальше по активам терминала.${c.flows&&(c.flows.withdrawals||c.flows.deposits)?`<br>Переводы с ${dmy(c.flows.since)}: ${c.flows.deposits?'пополнения '+sgn(c.flows.deposits)+' ₽, ':''}выводы ${sgn(c.flows.withdrawals)} ₽ — они входят в просадку. Результат фандинга, комиссий и торговли за это время: ${sgn(c.flows.performance)} ₽.`:''}</div></div>`;
 }
 
+let EDITABLE=true;
 const STAT_CARDS='#root .hero .card,#root .trio .card,#root .tiles .card';
 const REDUCED=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
 function countUp(el){
@@ -238,7 +244,8 @@ function render(d){
    <div class="card"><div class="lbl">Комиссии</div><div class="val ${cls(cs2.fees)}">${sgn(cs2.fees)} ₽</div><div class="sm">${cs2.funding>0?`съедают ${num(-cs2.fees/cs2.funding*100,1)}% фандинга`:'за период'}</div></div>
    <div class="card"><div class="lbl">Торговый результат</div><div class="val ${cls(cs2.trading)}">${sgn(cs2.trading)} ₽</div><div class="sm">зачисления прибыли минус списания убытка по счёту</div></div>`:'')+(d.source==='ledger'?'':realizedCard)+forexCard+`</div>`+(cs2?`
   <div class="sm" style="margin-top:-4px">Чистый результат по движениям за ${mlabel(d.month)}: <b class="${cls(cs2.net)}">${sgn(cs2.net)} ₽</b> — по дате проводки. За всё время с ${dmy(cs2.all_time.first_day)}: ${sgn(cs2.all_time.net)} ₽.${cs2.transfer?` Переводы между счетами за месяц: ${sgn(cs2.transfer)} ₽ — в доходность не входят.`:''}</div>`:'');
-  const cashTable=cs2&&cs2.entries.length?`<details class="card"><summary class="lbl" style="margin:0">Движения по счёту за ${mlabel(d.month)}: ${cs2.entries.length} записей</summary><div style="overflow-x:auto"><table class="tbl"><tr><th>Проводка</th><th class="r">Сумма, ₽</th><th>Тип</th><th>За день</th><th>Описание</th></tr>${cs2.entries.map(e=>`<tr><td>${dmy(e.day)}</td><td class="r ${cls(e.amount)}">${sgn(e.amount)}</td><td>${KIND[e.kind]||e.kind}</td><td>${e.ref_day?dmy(e.ref_day):''}</td><td>${esc(e.description)}</td></tr>`).join('')}</table></div></details>`:'';
+  const cashTable=cs2&&cs2.entries.length?`<details class="card"><summary class="lbl" style="margin:0">Движения по счёту за ${mlabel(d.month)}: ${cs2.entries.length} записей</summary><div style="overflow-x:auto"><table class="tbl"><tr><th>Проводка</th><th class="r">Сумма, ₽</th><th>Тип</th><th>За день</th><th>Описание</th>${EDITABLE?'<th></th>':''}</tr>${cs2.entries.map(e=>`<tr${e.kind==='excluded'?' style="opacity:.55"':''}><td>${dmy(e.day)}</td><td class="r ${cls(e.amount)}">${sgn(e.amount)}</td><td>${KIND[e.kind]||e.kind}</td><td>${e.ref_day?dmy(e.ref_day):''}</td><td>${esc(e.description)}</td>${EDITABLE?`<td class="r"><button class="mini" onclick="cashAct(${e.id},'toggle')">${e.kind==='excluded'?'вернуть':'не учитывать'}</button> <button class="mini" onclick="cashAct(${e.id},'delete')">удалить</button></td>`:''}</tr>`).join('')}</table></div></details>`:'';
+  const fxTable=fx&&fx.entries.length?`<details class="card"><summary class="lbl" style="margin:0">Форекс-результаты за ${mlabel(d.month)}: ${fx.entries.length} записей</summary><div style="overflow-x:auto"><table class="tbl"><tr><th>Дата</th><th class="r">USDT</th><th class="r">Курс</th><th class="r">₽</th><th>Источник</th><th>Комментарий</th>${EDITABLE?'<th></th>':''}</tr>${fx.entries.map(e=>`<tr><td>${dmy(e.day)}</td><td class="r ${cls(e.usd)}">${sgn(e.usd,2)}</td><td class="r">${e.rate?num(e.rate,2)+(e.fixed?' (зафикс.)':''):'—'}</td><td class="r ${cls(e.rub)}">${e.rub==null?'—':sgn(e.rub)}</td><td>${e.source==='manual'?'вручную':'cTrader'}</td><td>${esc(e.note||'')}</td>${EDITABLE?`<td class="r">${e.source==='manual'?`<button class="mini" onclick="fxDel('${esc(e.id)}')">удалить</button>`:''}</td>`:''}</tr>`).join('')}</table></div></details>`:'';
   let h=capHtml+`<div class="title"><h2>Итоги: ${mlabel(d.month)}</h2><span class="badge">${dmy(d.period.start)} — ${dmy(d.period.end)}.${d.period.end.slice(0,4)}${partial}</span></div>
   <div class="hero">
    <div class="card"><div class="big ${cls(d.return_pct)}">${sgn(d.return_pct,2)}%</div><div class="sm">доходность на капитал за период<br>капитал на начало ${d.source==='ledger'?'месяца':'периода'}: ${num(d.month_base)} ₽</div></div>
@@ -246,6 +253,7 @@ function render(d){
   </div>
   ${cashHtml}
   ${fxLine}
+  ${fxTable}
   ${cashTable}
   <div class="card"><div class="lbl">Накопленная доходность за период, %</div>${chart(c,new Set((d.spills||[]).map(x=>x.day)))}</div>
   <div class="tiles">
@@ -277,6 +285,30 @@ async function saveCash(){
   const d=await r.json();
   msg.textContent=`Добавлено: ${d.added}, повторов: ${d.duplicates}`+(d.unparsed.length?`, не распознано: ${d.unparsed.length}`:'');
   if(d.added)ta.value='';
+  await load();
+}
+async function cashAct(id,act){
+  if(act==='delete'&&!confirm('Удалить запись из дневника?'))return;
+  const r=await fetch(act==='delete'?'/api/report/cash/'+id:'/api/report/cash/'+id+'/toggle',{method:act==='delete'?'DELETE':'POST'});
+  if(!r.ok){alert('Не удалось выполнить действие: '+r.status);return}
+  await load();
+}
+async function fxAdd(){
+  const msg=document.getElementById('fxMsg'), day=document.getElementById('fxDay').value;
+  const usd=parseMoney('fxUsd'), rub=parseMoney('fxRub'), note=document.getElementById('fxNote').value;
+  if(!day){msg.textContent='Укажите дату';return}
+  if(usd===null||!isFinite(usd)||usd===0){msg.textContent='Укажите сумму в USDT (убыток со знаком минус)';return}
+  if(rub!==null&&!isFinite(rub)){msg.textContent='Сумма в ₽ указана неверно';return}
+  const r=await fetch('/api/report/forex-result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({day,usd,rub,note})});
+  if(!r.ok){msg.textContent='Ошибка '+r.status;return}
+  msg.textContent='Добавлено';
+  for(const id of ['fxUsd','fxRub','fxNote'])document.getElementById(id).value='';
+  await load();
+}
+async function fxDel(rid){
+  if(!confirm('Удалить форекс-результат?'))return;
+  const r=await fetch('/api/report/forex-result/'+encodeURIComponent(rid),{method:'DELETE'});
+  if(!r.ok){alert('Не удалось удалить: '+r.status);return}
   await load();
 }
 const parseMoney=id=>{const raw=document.getElementById(id).value.replace(/\s/g,'').replace(',','.');return raw===''?null:parseFloat(raw)};

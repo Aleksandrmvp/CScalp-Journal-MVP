@@ -146,6 +146,23 @@ def exclude_cash(con: sqlite3.Connection, day: str, amount: float) -> int:
     return n
 
 
+def delete_cash(con: sqlite3.Connection, rid: int) -> int:
+    n = con.execute("DELETE FROM cash_flow WHERE rowid=?", (rid,)).rowcount
+    con.commit()
+    return n
+
+
+def toggle_exclude_cash(con: sqlite3.Connection, rid: int) -> str | None:
+    """Switch one ledger row between 'left out of statistics' and its normal type."""
+    r = con.execute("SELECT kind, description FROM cash_flow WHERE rowid=?", (rid,)).fetchone()
+    if not r:
+        return None
+    kind = _cash_kind(r["description"]) if r["kind"] == EXCLUDED else EXCLUDED
+    con.execute("UPDATE cash_flow SET kind=? WHERE rowid=?", (kind, rid))
+    con.commit()
+    return kind
+
+
 def _cash_between(con: sqlite3.Connection, lo: str | None, hi: str | None) -> float:
     """Sum of ledger items booked after day `lo` up to and including day `hi`."""
     if not lo or not hi:
@@ -179,7 +196,7 @@ def _cash_sums(rows) -> dict:
 
 def _cash_block(con: sqlite3.Connection, month: str, base: float) -> dict | None:
     """Ledger movements: month totals by booking day and all-time totals."""
-    allrows = con.execute("SELECT day,amount,kind,ref_day,description FROM cash_flow "
+    allrows = con.execute("SELECT rowid AS id,day,amount,kind,ref_day,description FROM cash_flow "
                           "ORDER BY day DESC, rowid DESC").fetchall()
     if not allrows:
         return None

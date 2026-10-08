@@ -51,6 +51,13 @@ def add_result(con: sqlite3.Connection, day: str, usd: float, note: str = "",
     return {"added": added, "rate_cached": rate_known}
 
 
+def delete_result(con: sqlite3.Connection, rid: str) -> int:
+    """Only hand-entered results can be deleted; the broker API's rows are re-created by sync."""
+    n = con.execute("DELETE FROM forex_result WHERE id=? AND source='manual'", (rid,)).rowcount
+    con.commit()
+    return n
+
+
 def _entries(con: sqlite3.Connection, rows) -> list[dict]:
     """Priced entries. A hand-entered result for a day overrides the broker API's rows for it."""
     manual_days = {r["day"] for r in rows if r["source"] == "manual"}
@@ -61,13 +68,13 @@ def _entries(con: sqlite3.Connection, rows) -> list[dict]:
         fixed = r["rub"] is not None
         rate = r["rub"] / r["usd"] if fixed and r["usd"] else cached_rate(con, r["day"])
         rub = r["rub"] if fixed else (r["usd"] * rate if rate else None)
-        out.append({"day": r["day"], "usd": r["usd"], "rate": round(rate, 4) if rate else None,
+        out.append({"id": r["id"], "source": r["source"], "day": r["day"], "usd": r["usd"], "rate": round(rate, 4) if rate else None,
                     "rub": round(rub, 2) if rub is not None else None, "fixed": fixed, "note": r["note"]})
     return out
 
 
 def rub_by_day(con: sqlite3.Connection) -> dict[str, float]:
-    rows = con.execute("SELECT day, usd, note, rub, source FROM forex_result ORDER BY day").fetchall()
+    rows = con.execute("SELECT id, day, usd, note, rub, source FROM forex_result ORDER BY day").fetchall()
     out: dict[str, float] = {}
     for e in _entries(con, rows):
         if e["rub"] is not None:
@@ -76,7 +83,7 @@ def rub_by_day(con: sqlite3.Connection) -> dict[str, float]:
 
 
 def month_block(con: sqlite3.Connection, month: str) -> dict | None:
-    rows = con.execute("SELECT day, usd, note, rub, source FROM forex_result WHERE substr(day,1,7)=? "
+    rows = con.execute("SELECT id, day, usd, note, rub, source FROM forex_result WHERE substr(day,1,7)=? "
                        "ORDER BY day", (month,)).fetchall()
     entries = _entries(con, rows)
     if not entries:
