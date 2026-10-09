@@ -1,5 +1,6 @@
 {
   "client_id": "PASTE-CLIENT-ID-FROM-OPENAPI.CTRADER.COM",
   "client_secret": "PASTE-CLIENT-SECRET",
-  "account_logins": []
+  "account_logins": [],
+  "history_from": ""
 }

@@ -151,7 +151,9 @@ def run_sync() -> dict:
 
     con = db.connect()
     now_ms = int(time.time() * 1000)
-    since_ms = int(db.get_setting(con, "ctrader_since_ms") or 0) or now_ms - LOOKBACK_DAYS * 86400 * 1000
+    first_ms = (int(datetime.strptime(cfg["history_from"], "%Y-%m-%d").timestamp() * 1000)
+                if cfg.get("history_from") else now_ms - LOOKBACK_DAYS * 86400 * 1000)
+    since_ms = int(db.get_setting(con, "ctrader_since_ms") or 0) or first_ms
     client = Client(EndPoints.PROTOBUF_LIVE_HOST, EndPoints.PROTOBUF_PORT, TcpProtocol)
 
     def reply(msg):
