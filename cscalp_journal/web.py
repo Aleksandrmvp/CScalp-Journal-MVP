@@ -424,7 +424,7 @@ async function del(u){return fetch(u,{method:'DELETE'})}
 
 function renderPositions(rows){
   if(!rows.length){positions.innerHTML='<div class="mut">нет сделок</div>';return}
-  let h='<table><tr><th class=l>Инструмент</th><th>Позиция</th><th>Ср. цена</th><th>Реализ., ₽</th><th>Сделок</th></tr>';
+  let h='<table class=compact><tr><th class=l>Инструмент</th><th>Позиция</th><th>Ср. цена</th><th>Реализ., ₽</th><th>Сделок</th></tr>';
   for(const r of rows){
     const flat=r.net_qty===0, qcls=flat?'pos-flat':(r.net_qty>0?'buy':'sell');
     const rcls=r.realized_points>0?'pos':(r.realized_points<0?'neg':'mut');
@@ -525,13 +525,13 @@ function renderBundles(bs){
   if(sig===_lastBundlesJson)return;
   _lastBundlesJson=sig;
   if(!bs.length){bundles.innerHTML='<div class="mut">пока нет связок — отметьте сделки в журнале и создайте</div>';return}
-  let h='<table><tr><th class=l>Связка</th><th class=l>Статус</th><th>Сделок</th><th>Общий PnL</th><th class=l>Открытые ноги</th><th class=l>Раздвижка</th><th></th></tr>';
+  let h='<table class=compact><tr><th class=l>Связка</th><th class=l>Статус</th><th>Сделок</th><th>Общий PnL</th><th class=l>Открытые ноги</th><th class=l>Раздвижка</th><th></th></tr>';
   for(const b of bs){
     const st=b.is_open?'<span class="pill" style="background:var(--buy);color:#0f1115">открыта</span>':'<span class=mut>нет позиции</span>';
     const unit=b.points_only.length?'п.':'₽';
     const bnet=b.total_realized_net!==undefined?b.total_realized_net:b.total_realized;
     const pcls=bnet>0?'pos':(bnet<0?'neg':'mut');
-    const legs=b.open_legs.map(l=>`${l.ticker}:<b class="${l.net_qty>0?'buy':'sell'}">${fmt(l.net_qty)}</b>`).join('  ')||'<span class=mut>—</span>';
+    const legs=b.open_legs.map(l=>`${l.ticker}:<b class="${l.net_qty>0?'buy':'sell'}">${fmt(l.net_qty)}</b>`).join('<br>')||'<span class=mut>—</span>';
     let spread='<span class=mut>—</span>';
     if(b.spread){
       if(b.spread.error){spread='<span class=warn>ошибка</span>';}
