@@ -354,14 +354,12 @@ _PAGE = r"""<!doctype html>
  table.compact{width:auto;min-width:0}
  table.compact th,table.compact td{padding:3px 9px}
  tr.picked td{background:rgba(95,159,224,.22)}
- tr.inb td{background:rgba(232,235,243,.92);color:#14171f;border-bottom-color:#c4c9d6}
- tr.inb .mut{color:#5d6479} tr.inb .buy{color:#0d6b3f} tr.inb .sell{color:#b3302c}
- tr.inb .tag{border-color:#8f97ab;color:#2f3548} tr.inb a.tag{color:#1b4fbf;border-color:#1b4fbf!important}
- tr.inb.picked td{background:rgba(120,175,240,.75)}
- :root[data-theme="light"] tr.inb td{background:#202637;color:#eef0f4;border-bottom-color:#323a50}
- :root[data-theme="light"] tr.inb .mut{color:#a3abc2} :root[data-theme="light"] tr.inb .buy{color:#58d49a}
- :root[data-theme="light"] tr.inb .sell{color:#ff8a86}
- :root[data-theme="light"] tr.inb .tag{color:#d7dcea;border-color:#6a7390} :root[data-theme="light"] tr.inb a.tag{color:#8db8ff;border-color:#8db8ff!important}
+ tr.inb td{background:#2a2d35;color:#9aa1b2;border-bottom-color:#22252d}
+ tr.inb .mut{color:#767d8f} tr.inb .buy{color:#4a9d78} tr.inb .sell{color:#b0605d}
+ tr.inb.picked td{background:#2a2d35}
+ input.chk:disabled{opacity:.6;cursor:default}
+ :root[data-theme="light"] tr.inb td{background:#c8ccd6;color:#2a2e3a;border-bottom-color:#b4b9c6}
+ :root[data-theme="light"] tr.inb .mut{color:#566075}
 </style></head>
 <body>
 <header>
@@ -509,11 +507,11 @@ function renderJournal(){
   let h='<table class=compact><tr><th class=chk><input type=checkbox id=selAll title="Выбрать все новые сделки на странице" onchange="selPage(this.checked)"></th><th class=l>Инструмент</th><th class=l>Связка</th><th class=l>Время</th><th class=l>Событие</th><th class=l>Сторона</th><th>Цена</th><th>Кол-во</th><th class=l>Ликвидность</th></tr>';
   for(const r of rows){
     const [dpart,tpart]=r.ts.split(' '); const t=`<span class=mut>${dpart.slice(8,10)}.${dpart.slice(5,7)}.${dpart.slice(2,4)}</span> ${tpart||''}`;
-    const bundled=(r.bundles||[]).length>0, picked=r.id&&sel.has(r.id);
+    const bundled=(r.bundles||[]).length>0, picked=r.id&&sel.has(r.id), isFill=r.event==='FILL'&&r.id, isNew=isFill&&!bundled;
     const liq=r.liquidity?`<span class="tag ${r.liquidity}">${r.liquidity}</span>`:'';
-    const chk=r.event==='FILL'&&r.id?`<input type=checkbox class=chk tabindex=-1 ${sel.has(r.id)?'checked':''}>`:'';
+    const chk=isFill?(bundled?`<input type=checkbox class=chk checked disabled title="Уже в связке">`:`<input type=checkbox class=chk tabindex=-1 ${sel.has(r.id)?'checked':''}>`):'';
     const bnd=(r.bundles||[]).map(b=>`<a href="/bundle/${b.id}" class="tag" style="border-color:var(--accent)">${b.name}</a>`).join(' ');
-    h+=`<tr${r.event==='FILL'&&r.id?` data-id="${r.id}"`:''} class="${bundled?'inb':''} ${picked?'picked':''}"><td class="${chk?'chkcell':''}">${chk}</td><td class=l>${r.ticker}</td><td class=l>${bnd}</td><td class=l>${t}</td><td class=l>${r.event}</td><td class="l ${sideCls(r.side)}">${r.side||''}</td><td>${fmt(r.price)}</td><td>${fmt(r.qty)}</td><td class=l>${liq}</td></tr>`;
+    h+=`<tr${isNew?` data-id="${r.id}"`:''} class="${bundled?'inb':''} ${picked?'picked':''}"><td class="${isNew?'chkcell':''}">${chk}</td><td class=l>${r.ticker}</td><td class=l>${bnd}</td><td class=l>${t}</td><td class=l>${r.event}</td><td class="l ${sideCls(r.side)}">${r.side||''}</td><td>${fmt(r.price)}</td><td>${fmt(r.qty)}</td><td class=l>${liq}</td></tr>`;
   }
   journal.innerHTML=h+'</table>';
   syncSelAll();
