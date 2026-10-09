@@ -31,6 +31,20 @@ def cached_rate(con: sqlite3.Connection, day: str) -> float | None:
     return r["rate"] if r else None
 
 
+def ensure_rates(con: sqlite3.Connection) -> int:
+    """Cache the official USD/RUB rate for every day that has a result but no rate yet."""
+    fetched = 0
+    for r in con.execute("SELECT DISTINCT day FROM forex_result ORDER BY day").fetchall():
+        if con.execute("SELECT 1 FROM fx_rate WHERE day=?", (r["day"],)).fetchone():
+            continue
+        rate = _fetch_rate(r["day"])
+        if rate is not None:
+            con.execute("INSERT OR REPLACE INTO fx_rate(day,rate) VALUES(?,?)", (r["day"], rate))
+            fetched += 1
+    con.commit()
+    return fetched
+
+
 def add_result(con: sqlite3.Connection, day: str, usd: float, note: str = "",
                rub: float | None = None) -> dict:
     """Record a forex-leg result (negative = loss). `rub` fixes the ruble amount (to match the

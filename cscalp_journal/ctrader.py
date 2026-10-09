@@ -5,8 +5,8 @@ data/ctrader_token.json. The sync runs in a short-lived subprocess
 (`python -m cscalp_journal.ctrader sync`) because the Twisted reactor cannot be restarted
 inside the web process. Only LIVE accounts are read, with the read-only `accounts` scope.
 
-Net result of a closed position (USDT) = gross profit + swap - (opening + closing commission),
-which is how cTrader's own statement computes it.
+Net result of a closed position (USDT) = gross profit + swap - total commission, which is how
+cTrader's own statement computes it.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import config, db
+from . import config, db, forex
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "ctrader.json"
@@ -91,33 +91,27 @@ def status(con) -> dict:
     last = db.get_setting(con, "ctrader_last_result")
     return {"configured": is_configured(), "connected": _load_token() is not None,
             "library": importlib.util.find_spec("ctrader_open_api") is not None,
+            "stored": con.execute("SELECT COUNT(*) FROM forex_result WHERE source='api'").fetchone()[0],
             "last_sync": db.get_setting(con, "ctrader_last_sync"),
             "last_result": json.loads(last) if last else None, "redirect_uri": REDIRECT_URI}
 
 
 # ---------------------------------------------------------------- net result
-def closing_net(gross: float, swap: float, closing_comm: float, opening_comm_share: float) -> float:
-    """Commissions are always costs, so their sign is ignored; swap keeps its sign."""
-    return gross + swap - abs(closing_comm) - abs(opening_comm_share)
+def closing_net(gross: float, swap: float, commission: float) -> float:
+    """closePositionDetail.commission is the position's total (open + close); commissions are
+    always costs, so their sign is ignored. Swap keeps its sign. Matches cTrader's statement."""
+    return gross + swap - abs(commission)
 
 
 def _deal_rows(deals, names: dict) -> list[dict]:
-    """Closing deals -> forex_result rows. Opening commission is split over closings by volume."""
-    opened: dict[int, tuple[float, float]] = {}      # positionId -> (commission, volume)
-    for d in deals:
-        if not d.HasField("closePositionDetail"):
-            scale = 10 ** (d.moneyDigits or 2)
-            c, v = opened.get(d.positionId, (0.0, 0.0))
-            opened[d.positionId] = (c + abs(d.commission) / scale, v + d.filledVolume)
+    """Closing deals -> forex_result rows."""
     rows = []
     for d in deals:
         if not d.HasField("closePositionDetail"):
             continue
         cp = d.closePositionDetail
         scale = 10 ** (cp.moneyDigits or d.moneyDigits or 2)
-        oc, ov = opened.get(d.positionId, (0.0, 0.0))
-        share = oc * min(1.0, cp.closedVolume / ov) if ov else 0.0
-        net = closing_net(cp.grossProfit / scale, cp.swap / scale, cp.commission / scale, share)
+        net = closing_net(cp.grossProfit / scale, cp.swap / scale, cp.commission / scale)
         day = datetime.fromtimestamp(d.executionTimestamp / 1000).strftime("%Y-%m-%d")
         name = names.get(d.symbolId, str(d.symbolId))
         rows.append({"id": f"ct:{d.dealId}", "day": day, "usd": round(net, 2),
@@ -173,30 +167,40 @@ def run_sync() -> dict:
         reply((yield client.send(req, responseTimeoutInSeconds=30)))
         req = ProtoOAGetAccountListByAccessTokenReq()
         req.accessToken = token
+        wanted = {int(x) for x in cfg.get("account_logins", [])}   # empty = every live account
         accounts = [a for a in reply((yield client.send(req, responseTimeoutInSeconds=30))).ctidTraderAccount
-                    if a.isLive]
+                    if a.isLive and (not wanted or a.traderLogin in wanted)]
         result["accounts"] = len(accounts)
         for acc in accounts:
-            req = ProtoOAAccountAuthReq()
-            req.ctidTraderAccountId, req.accessToken = acc.ctidTraderAccountId, token
-            reply((yield client.send(req, responseTimeoutInSeconds=30)))
-            req = ProtoOASymbolsListReq()
+            try:
+                yield sync_account(acc)
+            except Exception as e:      # one unreachable account must not sink the others
+                result.setdefault("account_errors", []).append(f"{acc.traderLogin}: {e}")
+        forex.ensure_rates(con)
+        if not result.get("account_errors"):
+            # re-read a few days back next time so late-posted closings are not missed
+            db.set_setting(con, "ctrader_since_ms", str(now_ms - 3 * 86400 * 1000))
+
+    @defer.inlineCallbacks
+    def sync_account(acc):
+        req = ProtoOAAccountAuthReq()
+        req.ctidTraderAccountId, req.accessToken = acc.ctidTraderAccountId, token
+        reply((yield client.send(req, responseTimeoutInSeconds=30)))
+        req = ProtoOASymbolsListReq()
+        req.ctidTraderAccountId = acc.ctidTraderAccountId
+        names = {s.symbolId: s.symbolName
+                 for s in reply((yield client.send(req, responseTimeoutInSeconds=30))).symbol}
+        deals, t = [], since_ms
+        while t < now_ms:
+            req = ProtoOADealListReq()
             req.ctidTraderAccountId = acc.ctidTraderAccountId
-            names = {s.symbolId: s.symbolName
-                     for s in reply((yield client.send(req, responseTimeoutInSeconds=30))).symbol}
-            deals, t = [], since_ms
-            while t < now_ms:
-                req = ProtoOADealListReq()
-                req.ctidTraderAccountId = acc.ctidTraderAccountId
-                req.fromTimestamp, req.toTimestamp, req.maxRows = t, min(t + _WEEK_MS, now_ms), 1000
-                deals.extend(reply((yield client.send(req, responseTimeoutInSeconds=60))).deal)
-                t += _WEEK_MS
-            rows = _deal_rows(deals, names)
-            result["deals"] += len(deals)
-            result["positions"] += len(rows)
-            _store(con, rows)
-        # re-read a few days back next time so late-posted closings are not missed
-        db.set_setting(con, "ctrader_since_ms", str(now_ms - 3 * 86400 * 1000))
+            req.fromTimestamp, req.toTimestamp, req.maxRows = t, min(t + _WEEK_MS, now_ms), 1000
+            deals.extend(reply((yield client.send(req, responseTimeoutInSeconds=60))).deal)
+            t += _WEEK_MS
+        rows = _deal_rows(deals, names)
+        result["deals"] += len(deals)
+        result["positions"] += len(rows)
+        _store(con, rows)
 
     def done(_):
         if reactor.running:
