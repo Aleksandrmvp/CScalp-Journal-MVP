@@ -49,12 +49,49 @@ def trades_with_liquidity(con: sqlite3.Connection) -> list[dict]:
     return out
 
 
-def _intraday_recon(con: sqlite3.Connection, only_day: str | None = None) -> dict[str, dict]:
-    """Average-cost walk over fills -> per-ticker realized & fill count.
+class _Lots:
+    """Open lots of one instrument. A closing fill consumes the MOST RECENT lots first (LIFO),
+    so a fresh scalp (open, then close) is judged against its own entry price instead of the
+    average price of a large position carried from earlier days. Overall P&L (realized +
+    unrealized) is the same as with average cost; only its split changes."""
 
-    Walks ALL fills chronologically so the average cost basis carries across
-    days; when `only_day` (YYYY-MM-DD) is set, realized/commission/fills are
-    tallied for that day only (cost basis still reflects earlier fills).
+    def __init__(self) -> None:
+        self.lots: list[list[float]] = []      # [signed qty, price]; all lots share one direction
+
+    @property
+    def qty(self) -> float:
+        return sum(l[0] for l in self.lots)
+
+    @property
+    def avg(self) -> float:
+        q = sum(abs(l[0]) for l in self.lots)
+        return sum(abs(l[0]) * l[1] for l in self.lots) / q if q else 0.0
+
+    def __getitem__(self, key: str) -> float:
+        return self.qty if key == "qty" else self.avg
+
+    def apply(self, signed: float, price: float, point_value: float) -> float:
+        """Add a fill (signed qty); return the P&L realized by the part that closes lots."""
+        realized = 0.0
+        while signed != 0 and self.lots and (self.lots[-1][0] > 0) != (signed > 0):
+            lot = self.lots[-1]
+            take = min(abs(signed), abs(lot[0]))
+            direction = 1 if lot[0] > 0 else -1
+            realized += take * (price - lot[1]) * direction * point_value
+            lot[0] -= take * direction
+            signed += take * direction
+            if abs(lot[0]) < 1e-9:
+                self.lots.pop()
+        if signed != 0:
+            self.lots.append([signed, price])
+        return realized
+
+
+def _intraday_recon(con: sqlite3.Connection, only_day: str | None = None) -> dict[str, dict]:
+    """Lot-matching (LIFO) walk over fills -> per-ticker realized & fill count.
+
+    Walks ALL fills chronologically so open lots carry across days; when `only_day`
+    (YYYY-MM-DD) is set, realized/commission/fills are tallied for that day only.
 
     NOTE: net here does NOT include a day-open carried position that predates
     the parsed logs, so it must not be shown as the live position. Use terminal
@@ -65,27 +102,18 @@ def _intraday_recon(con: sqlite3.Connection, only_day: str | None = None) -> dic
     for t in trades:
         on_day = only_day is None or t["ts"][:10] == only_day
         b = book.setdefault(t["ticker"], {"qty": 0.0, "avg": 0.0, "realized": 0.0,
-                                          "fills": 0, "commission": 0.0})
+                                          "fills": 0, "commission": 0.0, "lots": _Lots()})
         pv = instruments.point_value(t["ticker"])
         signed = t["qty"] if t["side"] == "Buy" else -t["qty"]
         if on_day:
             b["fills"] += 1
             b["commission"] += t["commission"]
-        realized_leg = 0.0
-        if b["qty"] == 0 or (b["qty"] > 0) == (signed > 0):
-            new_qty = b["qty"] + signed
-            if new_qty != 0:
-                b["avg"] = (b["avg"] * b["qty"] + t["price"] * signed) / new_qty
-            b["qty"] = new_qty
-        else:
-            closing = min(abs(signed), abs(b["qty"]))
-            direction = 1 if b["qty"] > 0 else -1
-            realized_leg = closing * (t["price"] - b["avg"]) * direction * pv
-            b["qty"] += signed
-            if (b["qty"] > 0) != (direction > 0) and b["qty"] != 0:
-                b["avg"] = t["price"]
+        realized_leg = b["lots"].apply(signed, t["price"], pv)
+        b["qty"], b["avg"] = b["lots"].qty, b["lots"].avg
         if on_day:
             b["realized"] += realized_leg
+    for b in book.values():
+        b.pop("lots")
     return book
 
 
@@ -300,7 +328,7 @@ def bundle_trades(con: sqlite3.Connection, bundle_id: int) -> dict:
     if not b:
         return {}
     legs = _bundle_legs_sorted(con, bundle_id)
-    book: dict[str, dict] = {}
+    book: dict[str, _Lots] = {}
     unconfigured: set[str] = set()
     cycles: list[dict] = []
     cur: dict | None = None
@@ -313,7 +341,7 @@ def bundle_trades(con: sqlite3.Connection, bundle_id: int) -> dict:
         if not instruments.is_configured(tkr):
             unconfigured.add(tkr)
         pv = instruments.point_value(tkr)
-        bk = book.setdefault(tkr, {"qty": 0.0, "avg": 0.0})
+        bk = book.setdefault(tkr, _Lots())
         signed = leg["qty"] if leg["side"] == "Buy" else -leg["qty"]
         exposure_before = total_abs()
         if exposure_before == 0:
@@ -324,19 +352,7 @@ def bundle_trades(con: sqlite3.Connection, bundle_id: int) -> dict:
             cur["commission"] += commission.per_fill(
                 tkr, side=leg["side"], qty=leg["qty"], liquidity=leg["liquidity"])
         prev_abs = abs(bk["qty"])
-        realized_leg = 0.0
-        if bk["qty"] == 0 or (bk["qty"] > 0) == (signed > 0):
-            new_qty = bk["qty"] + signed
-            if new_qty != 0:
-                bk["avg"] = (bk["avg"] * bk["qty"] + leg["price"] * signed) / new_qty
-            bk["qty"] = new_qty
-        else:
-            closing = min(abs(signed), abs(bk["qty"]))
-            direction = 1 if bk["qty"] > 0 else -1
-            realized_leg = closing * (leg["price"] - bk["avg"]) * direction * pv
-            bk["qty"] += signed
-            if bk["qty"] != 0 and (bk["qty"] > 0) != (direction > 0):
-                bk["avg"] = leg["price"]
+        realized_leg = bk.apply(signed, leg["price"], pv)
         cur["realized"] += realized_leg
         new_abs = abs(bk["qty"])
         exposure_after = total_abs()
