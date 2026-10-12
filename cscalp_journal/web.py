@@ -417,6 +417,7 @@ function toggleTheme(){const t=document.documentElement.dataset.theme==='light'?
 const sel = new Set();
 let BUNDLES = [];
 const fmt = n => n===null||n===undefined ? '' : (Math.round(n*1e6)/1e6).toLocaleString('ru-RU');
+const fmtR=n=>n===null||n===undefined?'':n.toLocaleString('ru-RU',{minimumFractionDigits:1,maximumFractionDigits:1});
 const sideCls = s => s==='Buy'?'buy':(s==='Sell'?'sell':'');
 async function j(u){return (await fetch(u)).json()}
 async function post(u,body){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
@@ -428,7 +429,7 @@ function renderPositions(rows){
   for(const r of rows){
     const flat=r.net_qty===0, qcls=flat?'pos-flat':(r.net_qty>0?'buy':'sell');
     const rcls=r.realized_points>0?'pos':(r.realized_points<0?'neg':'mut');
-    h+=`<tr><td class=l>${r.ticker}</td><td class="${qcls}">${fmt(r.net_qty)}</td><td>${flat?'':fmt(r.avg_price)}</td><td class="${rcls}">${fmt(r.realized_points)}</td><td class=mut>${r.fills}</td></tr>`;
+    h+=`<tr><td class=l>${r.ticker}</td><td class="${qcls}">${fmt(r.net_qty)}</td><td>${flat?'':fmt(r.avg_price)}</td><td class="${rcls}">${fmtR(r.realized_points)}</td><td class=mut>${r.fills}</td></tr>`;
   }
   positions.innerHTML=h+'</table>';
 }
@@ -544,7 +545,7 @@ function renderBundles(bs){
     h+=`<tr>
       <td class=l><a href="/bundle/${b.id}">#${b.id} ${b.name} ↗</a></td>
       <td class=l>${st}</td><td>${b.num_trades}</td>
-      <td class="${pcls}">${fmt(bnet)} ${unit}</td>
+      <td class="${pcls}">${fmtR(bnet)} ${unit}</td>
       <td class=l>${legs}</td><td class=l>${spread}</td>
       <td class=l><button onclick="addSelTo(${b.id})">+ выбр. (${sel.size})</button>
       <button class=danger onclick="delBundle(${b.id})">✕</button></td></tr>`;
@@ -585,9 +586,9 @@ async function tick(){
     const comm=sm.commission_today||0;
     const pend=sm.commission_pending||[];
     const pendStr=pend.length?`, занижена — нет биржевого сбора для ${pend.join(', ')}`:'';
-    const commStr=comm?` <span class=mut>(−${fmt(comm)} ₽ комиссия${pendStr})</span>`:'';
+    const commStr=comm?` <span class=mut>(−${fmtR(comm)} ₽ комиссия${pendStr})</span>`:'';
     const mix=sm.points_mixed&&sm.points_mixed.length?' (часть в пунктах)':'';
-    summary.innerHTML=`сделок: ${sm.fills}   ${liq}   ·   за день (net): <b class="${rcls}">${fmt(rt)} ₽</b>${commStr}${mix}`;
+    summary.innerHTML=`сделок: ${sm.fills}   ${liq}   ·   за день (net): <b class="${rcls}">${fmtR(rt)} ₽</b>${commStr}${mix}`;
     tgLoad();
   }catch(e){summary.textContent='ошибка загрузки';}
   clock.textContent=new Date().toLocaleTimeString('ru-RU');
@@ -682,6 +683,7 @@ _BUNDLE_PAGE = r"""<!doctype html>
 <script>
 function toggleTheme(){const t=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=t;try{localStorage.setItem('theme',t)}catch(e){}load();}
 const fmt=n=>n===null||n===undefined?'':(Math.round(n*1e6)/1e6).toLocaleString('ru-RU');
+const fmtR=n=>n===null||n===undefined?'':n.toLocaleString('ru-RU',{minimumFractionDigits:1,maximumFractionDigits:1});
 const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const id=parseInt(location.pathname.split('/').pop());
 const hhmmss=t=>t?(t.split(' ')[1]||t):'—';
@@ -700,7 +702,7 @@ function eventsTable(events){
     const rm=e.kind==='manual'
       ? `<button class=danger title="удалить эту ногу" onclick="delEvent('manual',${e.ref})">✕</button>`
       : `<button class=danger title="убрать эту сделку из связки" onclick="delEvent('internal','${e.ref}')">✕</button>`;
-    h+=`<tr><td class=l>${hhmmss(e.ts)}</td><td class=l><span class="pill ${e.action}">${e.action}</span></td><td class=l>${e.venue}</td><td class=l>${e.ticker}</td><td class="l ${sideCls(e.side)}">${e.side}</td><td>${fmt(e.price)}</td><td>${fmt(e.qty)}</td><td class=l>${liq}</td><td>${fmt(e.net_after)}</td><td class="${rc}">${e.realized_leg?fmt(e.realized_leg):''}</td><td>${fmt(e.realized_cum)}</td><td>${rm}</td></tr>`;
+    h+=`<tr><td class=l>${hhmmss(e.ts)}</td><td class=l><span class="pill ${e.action}">${e.action}</span></td><td class=l>${e.venue}</td><td class=l>${e.ticker}</td><td class="l ${sideCls(e.side)}">${e.side}</td><td>${fmt(e.price)}</td><td>${fmt(e.qty)}</td><td class=l>${liq}</td><td>${fmt(e.net_after)}</td><td class="${rc}">${e.realized_leg?fmtR(e.realized_leg):''}</td><td>${fmtR(e.realized_cum)}</td><td>${rm}</td></tr>`;
   }
   return h+'</table>';
 }
@@ -731,8 +733,8 @@ async function load(){
   const net=t.total_realized_net!==undefined?t.total_realized_net:t.total_realized;
   const pcls=net>0?'pos':(net<0?'neg':'');
   let kpis=`<div><div class=mut>Статус</div><div class=big>${t.is_open?'Открыта':'Нет позиции'}</div></div>`+
-    `<div><div class=mut>PnL (net)</div><div class="big ${pcls}">${fmt(net)} ${unit}</div></div>`+
-    (t.total_commission?`<div><div class=mut>Комиссия</div><div class="big mut">−${fmt(t.total_commission)} ${unit}</div></div>`:'')+
+    `<div><div class=mut>PnL (net)</div><div class="big ${pcls}">${fmtR(net)} ${unit}</div></div>`+
+    (t.total_commission?`<div><div class=mut>Комиссия</div><div class="big mut">−${fmtR(t.total_commission)} ${unit}</div></div>`:'')+
     `<div><div class=mut>Арб. сделок</div><div class=big>${t.num_trades}</div></div>`;
   document.getElementById('kpis').innerHTML=kpis;
   document.getElementById('warn').textContent=t.points_only.length
@@ -767,13 +769,13 @@ async function load(){
     const st=tr.status==='open'?'<span class="pill" style="background:var(--reduce)">открыта</span>':'<span class="pill" style="background:var(--mut)">закрыта</span>';
     const trnet=tr.realized_net!==undefined?tr.realized_net:tr.realized_pnl;
     const pc=trnet>0?'pos':(trnet<0?'neg':'mut');
-    const commNote=tr.commission?` <span class=mut>(−${fmt(tr.commission)} комис.)</span>`:'';
+    const commNote=tr.commission?` <span class=mut>(−${fmtR(tr.commission)} комис.)</span>`:'';
     const sp=tr.spread&&!tr.spread.error?`раздвижка входа: <b>${fmt(tr.spread.value)}%</b>`:'';
     const per=`${hhmmss(tr.entry_ts)} → ${tr.exit_ts&&tr.status==='closed'?hhmmss(tr.exit_ts):'…'}`;
     const pubBtns=`<button onclick="publish(${tr.idx},'open')" title="опубликовать открытие в канал">📢 открытие</button>`+
         (tr.status==='closed'?`<button onclick="publish(${tr.idx},'close')" title="опубликовать закрытие в канал">📢 закрытие</button>`:'');
     th+=`<div class=trade><h3>Сделка #${tr.idx} ${st}<span class=mut>${per}</span>`+
-        `<span class="${pc}">PnL ${fmt(trnet)} ${unit}${commNote}</span><span class=mut>${sp}</span>${pubBtns}</h3>`;
+        `<span class="${pc}">PnL ${fmtR(trnet)} ${unit}${commNote}</span><span class=mut>${sp}</span>${pubBtns}</h3>`;
     if(tr.open_legs.length)th+=`<div class=mut style="margin-bottom:6px">открыто: `+
         tr.open_legs.map(l=>`${l.ticker} <b class="${l.net_qty>0?'buy':'sell'}">${fmt(l.net_qty)}</b> @ ${fmt(l.avg_price)}`).join(', ')+`</div>`;
     th+=eventsTable(tr.events)+`</div>`;
