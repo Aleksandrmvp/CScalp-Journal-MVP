@@ -54,6 +54,7 @@ echo Loading history from the terminal logs...
 ".venv\Scripts\python.exe" -m cscalp_journal.ingest
 echo.
 echo The journal opens at http://127.0.0.1:%CSCALP_WEB_PORT%
+echo Your data (database, settings, keys) is kept in %APPDATA%\CScalpJournal and survives updates.
 echo Close this window to stop the journal.
 if not defined CSCALP_NO_BROWSER start "" "http://127.0.0.1:%CSCALP_WEB_PORT%"
 ".venv\Scripts\python.exe" -m cscalp_journal.web

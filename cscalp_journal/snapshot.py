@@ -5,7 +5,7 @@ write endpoints, no settings form). Always the dark look with the photo backdrop
 the viewer's system theme is.
 
 Usage:
-    python -m cscalp_journal.snapshot [output.html]   # default: data/report_snapshot.html
+    python -m cscalp_journal.snapshot [output.html]   # default: <data folder>/report_snapshot.html
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from . import db, report
+from . import config, db, report
 from .report_page import REPORT_PAGE
 from .theme import BG_PATH, photo_rules
 
@@ -61,7 +61,7 @@ def build_html(con) -> str:
 
 
 if __name__ == "__main__":
-    out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("data/report_snapshot.html")
+    out = Path(sys.argv[1]) if len(sys.argv) > 1 else config.DATA_DIR / "report_snapshot.html"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(build_html(db.connect()), encoding="utf-8")
     print(out.resolve())

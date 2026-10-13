@@ -3,13 +3,54 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+
+def _data_dir() -> Path:
+    """Where the user's own files live: database, settings, keys. Kept OUTSIDE the program
+    folder so replacing the program with a newer version never touches them."""
+    if os.environ.get("CSCALP_DATA_DIR"):
+        return Path(os.environ["CSCALP_DATA_DIR"])
+    if os.environ.get("CSCALP_DB"):                       # Docker / custom setups
+        return Path(os.environ["CSCALP_DB"]).parent
+    base = os.environ.get("APPDATA")
+    return Path(base) / "CScalpJournal" if base else Path.home() / ".cscalp-journal"
+
+
+DATA_DIR = _data_dir()
+
+# Local SQLite database (our durable archive; source logs rotate daily).
+DB_PATH = Path(os.environ.get("CSCALP_DB", DATA_DIR / "journal.sqlite"))
+
+# Files that older versions kept inside the program folder. On first start they are COPIED
+# (the originals stay as a backup) to the data folder.
+_LEGACY = {
+    DB_PATH: ROOT / "data" / "journal.sqlite",
+    DATA_DIR / "ctrader_token.json": ROOT / "data" / "ctrader_token.json",
+    DATA_DIR / "telegram.json": ROOT / "telegram.json",
+    DATA_DIR / "ctrader.json": ROOT / "ctrader.json",
+    DATA_DIR / "cscalp_settings.json": ROOT / "cscalp_settings.json",
+}
+
+
+def _migrate_legacy() -> None:
+    for new, old in _LEGACY.items():
+        try:
+            if old.exists() and not new.exists() and old.resolve() != new.resolve():
+                new.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(old, new)
+        except OSError:
+            pass
+
+
+_migrate_legacy()
+
 # Optional user settings (log folder, instrument steps, commission model). See
 # cscalp_settings.example.json; environment variables win over the file.
-SETTINGS_PATH = Path(os.environ.get("CSCALP_SETTINGS", ROOT / "cscalp_settings.json"))
+SETTINGS_PATH = Path(os.environ.get("CSCALP_SETTINGS", DATA_DIR / "cscalp_settings.json"))
 
 
 def _load_user_settings() -> dict:
@@ -29,9 +70,6 @@ LOG_ROOT = Path(
     or USER.get("log_root")
     or r"C:\Program Files (x86)\FSR Launcher\SubApps\CS\Log"
 )
-
-# Local SQLite database (our durable archive; source logs rotate daily).
-DB_PATH = Path(os.environ.get("CSCALP_DB", Path(__file__).resolve().parent.parent / "data" / "journal.sqlite"))
 
 # Re-parse interval for the ingest loop, seconds. Logs are small; a full
 # idempotent re-parse + upsert every few seconds is simpler than byte-tailing.

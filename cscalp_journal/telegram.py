@@ -19,7 +19,9 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "telegram.json"
+from . import config
+
+CONFIG_PATH = config.DATA_DIR / "telegram.json"
 
 
 def load_config() -> dict:

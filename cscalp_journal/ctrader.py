@@ -1,6 +1,6 @@
 """cTrader Open API (FxPro): OAuth, token storage and closed-position sync into forex_result.
 
-Keys live in ./ctrader.json ({"client_id", "client_secret"}); the access token is kept in
+Keys live in ctrader.json (in the data folder) ({"client_id", "client_secret"}); the access token is kept in
 data/ctrader_token.json. The sync runs in a short-lived subprocess
 (`python -m cscalp_journal.ctrader sync`) because the Twisted reactor cannot be restarted
 inside the web process. Only LIVE accounts are read, with the read-only `accounts` scope.
@@ -22,8 +22,8 @@ from pathlib import Path
 from . import config, db, forex
 
 ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = ROOT / "ctrader.json"
-TOKEN_PATH = config.DB_PATH.parent / "ctrader_token.json"
+CONFIG_PATH = config.DATA_DIR / "ctrader.json"
+TOKEN_PATH = config.DATA_DIR / "ctrader_token.json"
 REDIRECT_URI = f"http://127.0.0.1:{config.WEB_PORT}/ctrader/callback"
 SYNC_SECONDS = 15 * 60
 LOOKBACK_DAYS = 120
