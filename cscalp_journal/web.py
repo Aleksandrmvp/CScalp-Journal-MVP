@@ -738,7 +738,7 @@ async function load(){
     `<div><div class=mut>Арб. сделок</div><div class=big>${t.num_trades}</div></div>`;
   document.getElementById('kpis').innerHTML=kpis;
   document.getElementById('warn').textContent=t.points_only.length
-    ? `PnL в пунктах (не в рублях): не задана стоимость пункта для ${t.points_only.join(', ')} — заполните cscalp_journal/instruments.py`:'';
+    ? `PnL в пунктах (не в рублях): не задана стоимость пункта для ${t.points_only.join(', ')} — впишите шаг цены и его стоимость в cscalp_settings.json (раздел instruments, см. docs/УСТАНОВКА.md)`:'';
 
   // formula bindings from the latest trade's spread
   const lastSp=t.trades.length?t.trades[t.trades.length-1].spread:null;

@@ -28,7 +28,7 @@ STEP: dict[str, tuple[float, float]] = {
 for _name, _v in config.USER.get("instruments", {}).items():
     STEP[_name] = (float(_v["step"]), float(_v["step_value"]))
 
-_SUFFIX = re.compile(r"-\d{2}\.\d{2}$")
+_SUFFIX = re.compile(r"-\d{1,2}\.\d{2}$")   # FUT.Si-12.26 and FUT.Si-3.27 (one-digit month)
 
 
 def base_symbol(ticker: str) -> str:
