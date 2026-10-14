@@ -123,6 +123,11 @@ _TVALIAS = {
 }
 
 
+# USDRUBF / CNYRUBF perpetual futures may be traded as plain spot (TOM) in the same bundle.
+_SPOT = {"USDRUB": {"USDUTSTOM", "USDRUBTOM", "USDRUB"}, "CNYRUB": {"CNYRUBTOM", "CNYRUB"},
+         "EURRUB": {"EURRUBTOM", "EURRUB"}}
+
+
 def _leg_base(ticker: str) -> str:
     """FUT.CNY-12.26 -> CNY ; FUT.CNYRUBF -> CNYRUBF (uppercased)."""
     from . import instruments
@@ -182,6 +187,11 @@ def build_resolver(entry_prices: dict[str, float]):
         for base, t in leg_base.items():            # prefix fallback
             if base.startswith(canon) or canon.startswith(base):
                 return t
+        for pair, spot in _SPOT.items():            # currency spot (TOM) instead of the perpetual
+            if canon.startswith(pair):
+                for base, t in leg_base.items():
+                    if re.sub(r"[^A-Z]", "", base) in spot:
+                        return t
         return None
 
     def resolve(sym: str) -> float:
@@ -202,6 +212,8 @@ def build_resolver(entry_prices: dict[str, float]):
                 return syn
             bindings[sym] = {"ticker": "(нет форекс-ноги)", "price": 1.0, "defaulted": True}
             return 1.0
-        raise KeyError(f"символ {sym!r} не сопоставлен ни одной ноге связки")
+        raise KeyError(f"символ {sym!r} не сопоставлен ни одной ноге связки "
+                       f"(ноги: {', '.join(sorted(entry_prices)) or 'нет'}). Добавьте в связку сделки "
+                       f"по этому инструменту или уберите символ из формулы")
 
     return resolve, bindings
