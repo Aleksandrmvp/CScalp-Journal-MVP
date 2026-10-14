@@ -39,9 +39,15 @@ def base_symbol(ticker: str) -> str:
     return _SUFFIX.sub("", t)
 
 
+def _step(ticker: str):
+    """Settings for the ticker; shares may be keyed 'TQBR.TATN' or just 'TATN'."""
+    b = base_symbol(ticker)
+    return STEP.get(b) or STEP.get(b.rsplit(".", 1)[-1])
+
+
 def point_value(ticker: str) -> float:
     """RUB per 1.0 price move per contract. 1.0 (points) if unconfigured."""
-    s = STEP.get(base_symbol(ticker))
+    s = _step(ticker)
     if not s:
         return 1.0
     size, value = s
@@ -49,4 +55,4 @@ def point_value(ticker: str) -> float:
 
 
 def is_configured(ticker: str) -> bool:
-    return base_symbol(ticker) in STEP
+    return _step(ticker) is not None

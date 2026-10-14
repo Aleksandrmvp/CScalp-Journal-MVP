@@ -7,7 +7,9 @@
     "USDRUBF": {"step": 0.01,  "step_value": 10.0},
     "CNYRUBF": {"step": 0.001, "step_value": 1.0},
     "EURRUBF": {"step": 0.01,  "step_value": 10.0},
-    "CNY":     {"step": 0.001, "step_value": 1.0}
+    "CNY":     {"step": 0.001, "step_value": 1.0},
+    "TATN":    {"step": 0.1,   "step_value": 0.1},
+    "TATNP":   {"step": 0.1,   "step_value": 0.1}
   },
   "commission": {
     "clearing_per_lot": 0.18,

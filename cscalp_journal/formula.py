@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Callable
 
-_TOKEN = re.compile(r"\s*(?:(?P<num>\d+(?:[.,]\d+)?)|(?P<op>[()+\-*/])|(?P<sym>[A-Za-z][A-Za-z0-9:._!\-]*))")
+_TOKEN = re.compile(r"\s*(?:(?P<num>\d+(?:[.,]\d+)?)|(?P<op>[()+\-*/])|(?P<sym>[A-Za-z](?:[A-Za-z0-9:._!]|-(?=\d))*))")
 
 
 def _tokenize(expr: str):
@@ -126,7 +126,7 @@ _TVALIAS = {
 def _leg_base(ticker: str) -> str:
     """FUT.CNY-12.26 -> CNY ; FUT.CNYRUBF -> CNYRUBF (uppercased)."""
     from . import instruments
-    return instruments.base_symbol(ticker).upper()
+    return instruments.base_symbol(ticker).upper().rsplit(".", 1)[-1]   # TQBR.TATN -> TATN
 
 
 def _usdrub(lbp: dict[str, float]):
