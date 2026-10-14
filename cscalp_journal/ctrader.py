@@ -174,10 +174,15 @@ def run_sync() -> dict:
                     if a.isLive and (not wanted or a.traderLogin in wanted)]
         result["accounts"] = len(accounts)
         for acc in accounts:
-            try:
-                yield sync_account(acc)
-            except Exception as e:      # one unreachable account must not sink the others
-                result.setdefault("account_errors", []).append(f"{acc.traderLogin}: {e}")
+            for attempt in (1, 2):      # a slow account often answers on the second try
+                try:
+                    yield sync_account(acc)
+                    break
+                except Exception as e:  # one unreachable account must not sink the others
+                    if attempt == 2:
+                        hint = (" — нет ответа от счёта; если он вам не нужен, впишите нужный номер "
+                                "в account_logins в ctrader.json") if "Deferred" in str(e) else ""
+                        result.setdefault("account_errors", []).append(f"{acc.traderLogin}: {e}{hint}")
         forex.ensure_rates(con)
         if not result.get("account_errors"):
             # re-read a few days back next time so late-posted closings are not missed
@@ -214,7 +219,7 @@ def run_sync() -> dict:
     client.setConnectedCallback(lambda c: work().addErrback(failed).addBoth(done))
     client.setDisconnectedCallback(lambda c, reason: None)
     client.startService()
-    reactor.callLater(180, done, None)
+    reactor.callLater(230, done, None)
     reactor.run(installSignalHandlers=False)
     return result
 
@@ -227,7 +232,7 @@ def sync_now() -> dict:
         con = db.connect()
         try:
             out = subprocess.run([sys.executable, "-m", "cscalp_journal.ctrader", "sync"], cwd=ROOT,
-                                 capture_output=True, text=True, timeout=240)
+                                 capture_output=True, text=True, timeout=280)
             res = json.loads(out.stdout.strip().splitlines()[-1]) if out.stdout.strip() else \
                 {"error": (out.stderr or "пустой ответ").strip()[-300:]}
         except Exception as e:

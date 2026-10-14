@@ -21,6 +21,9 @@ STEP: dict[str, tuple[float, float]] = {
     "GLDRUBF": (0.1, 0.1),
     "GOLD":    (0.1, 8.43414),    # step value tracks USD/RUB; snapshot value
     "Si":      (1.0, 1.0),
+    "ED":      (0.0001, 8.4),     # EUR/USD futures: 0.1 USD per step, ~USD/RUB (approximate)
+    "TATN":    (0.1, 0.1),        # shares (TQBR), lot = 1 share
+    "TATNP":   (0.1, 0.1),
     "CNY":     (0.001, 1.0),
 }
 
