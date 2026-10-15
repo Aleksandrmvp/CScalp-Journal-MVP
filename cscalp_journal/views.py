@@ -240,6 +240,7 @@ def bundles(con: sqlite3.Connection) -> list[dict]:
         last = t["trades"][-1] if t["trades"] else None
         result.append({
             "id": t["id"], "name": t["name"], "note": t["note"],
+            "auto": bool(con.execute("SELECT auto FROM bundle WHERE id=?", (b["id"],)).fetchone()[0]),
             "is_open": t["is_open"], "num_trades": t["num_trades"],
             "total_realized": t["total_realized"],
             "total_commission": t["total_commission"],

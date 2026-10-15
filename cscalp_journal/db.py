@@ -159,6 +159,10 @@ def connect() -> sqlite3.Connection:
         con.execute("ALTER TABLE bundle ADD COLUMN formula TEXT")
     except sqlite3.OperationalError:
         pass  # column already exists
+    try:
+        con.execute("ALTER TABLE bundle ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     return con
 
 
@@ -279,6 +283,43 @@ def rename_bundle(con, bundle_id: int, name: str, note: str | None) -> None:
 def set_formula(con, bundle_id: int, formula: str) -> None:
     con.execute("UPDATE bundle SET formula=? WHERE id=?", (formula, bundle_id))
     con.commit()
+
+
+def set_auto(con, bundle_id: int, auto: bool) -> int:
+    con.execute("UPDATE bundle SET auto=? WHERE id=?", (1 if auto else 0, bundle_id))
+    con.commit()
+    return auto_assign(con) if auto else 0
+
+
+def auto_assign(con) -> int:
+    """New fills go into a bundle that has 'auto' on: same ticker as one of its legs and later than
+    its newest fill (older loose fills stay untouched). A ticker claimed by two auto bundles is
+    skipped, so nothing lands in the wrong one."""
+    bundles = con.execute("SELECT id FROM bundle WHERE auto=1").fetchall()
+    info: dict[int, tuple[set[str], str]] = {}
+    owners: dict[str, list[int]] = {}
+    for b in bundles:
+        rows = con.execute("SELECT t.ticker, t.ts FROM bundle_member m JOIN trade t ON t.trade_id=m.trade_id "
+                           "WHERE m.bundle_id=?", (b["id"],)).fetchall()
+        if not rows:
+            continue
+        tickers = {r["ticker"] for r in rows}
+        info[b["id"]] = (tickers, max(r["ts"] for r in rows))
+        for t in tickers:
+            owners.setdefault(t, []).append(b["id"])
+    added = 0
+    for bid, (tickers, last_ts) in info.items():
+        for t in tickers:
+            if owners[t] != [bid]:
+                continue
+            ids = [r["trade_id"] for r in con.execute(
+                "SELECT trade_id FROM trade WHERE ticker=? AND ts>? AND trade_id NOT IN "
+                "(SELECT trade_id FROM bundle_member)", (t, last_ts))]
+            for tid in ids:
+                added += con.execute("INSERT OR IGNORE INTO bundle_member(bundle_id,trade_id) VALUES(?,?)",
+                                     (bid, tid)).rowcount
+    con.commit()
+    return added
 
 
 def set_name(con, bundle_id: int, name: str) -> None:

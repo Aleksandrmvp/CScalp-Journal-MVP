@@ -50,6 +50,7 @@ def loop(con) -> None:
             new = {k: v for k, v in stats.items() if v}
             if new:
                 print(f"[{time.strftime('%H:%M:%S')}] +{new}")
+            db.auto_assign(con)
         # NOTE: Telegram posting is manual-only (📢 buttons on the bundle page).
         # Auto-posting was intentionally removed — do not call notify.check_and_post here.
         time.sleep(config.POLL_SECONDS)

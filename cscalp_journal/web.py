@@ -117,6 +117,15 @@ def api_set_formula(bundle_id: int, f: Formula):
     return {"ok": True}
 
 
+class AutoFlag(BaseModel):
+    auto: bool
+
+
+@app.put("/api/bundles/{bundle_id}/auto")
+def api_set_auto(bundle_id: int, a: AutoFlag):
+    return {"ok": True, "added": db.set_auto(db.connect(), bundle_id, a.auto)}
+
+
 class Rename(BaseModel):
     name: str
 
@@ -547,7 +556,8 @@ function renderBundles(bs){
       <td class=l>${st}</td><td>${b.num_trades}</td>
       <td class="${pcls}">${fmtR(bnet)} ${unit}</td>
       <td class=l>${legs}</td><td class=l>${spread}</td>
-      <td class=l><button onclick="addSelTo(${b.id})">+ выбр. (${sel.size})</button>
+      <td class=l><label class=mut title="Новые сделки по тикерам этой связки добавляются в неё сами"><input type=checkbox ${b.auto?'checked':''} onchange="setAuto(${b.id},this.checked)"> авто</label>
+      <button onclick="addSelTo(${b.id})">+ выбр. (${sel.size})</button>
       <button class=danger onclick="delBundle(${b.id})">✕</button></td></tr>`;
   }
   bundles.innerHTML=h+'</table>';
@@ -561,6 +571,7 @@ async function createBundle(){
   bname.value='';sel.clear();selc.textContent=0;tick();
 }
 async function addSelTo(bid){ if(!sel.size){alert('Ничего не выбрано');return} await post(`/api/bundles/${bid}/members`,{trade_ids:[...sel]}); sel.clear();selc.textContent=0;tick(); }
+async function setAuto(bid,on){ await put(`/api/bundles/${bid}/auto`,{auto:on}); tick(); }
 async function delBundle(bid){ if(confirm('Удалить связку #'+bid+'?')){ await del('/api/bundles/'+bid); tick(); } }
 
 async function tgLoad(){
