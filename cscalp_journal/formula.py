@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Callable
 
-_TOKEN = re.compile(r"\s*(?:(?P<num>\d+(?:[.,]\d+)?)|(?P<op>[()+\-*/])|(?P<sym>[A-Za-z](?:[A-Za-z0-9:._!]|-(?=\d))*))")
+_TOKEN = re.compile(r"\s*(?:(?P<num>\d+(?:[.,]\d+)?)|(?P<op>[()+\-*/])|(?P<sym>[A-Za-z](?:[A-Za-z0-9:._!]|-(?=\d{1,2}\.\d{2}(?!\d)))*))")
 
 
 def _tokenize(expr: str):
