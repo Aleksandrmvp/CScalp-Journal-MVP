@@ -111,6 +111,25 @@ CREATE TABLE IF NOT EXISTS forex_result (
     note TEXT
 );
 
+-- Closed cTrader positions as trades (one row per closing deal): the journal shows them next to
+-- the MOEX fills. forex_result keeps the per-day net for the report.
+CREATE TABLE IF NOT EXISTS forex_trade (
+    id          TEXT PRIMARY KEY,        -- ct:<dealId>
+    position_id TEXT,
+    ts_open     TEXT,                    -- time of the position's first (opening) deal
+    ts_close    TEXT NOT NULL,
+    symbol      TEXT NOT NULL,
+    side        TEXT NOT NULL,           -- side of the OPENING deal
+    volume      REAL NOT NULL,
+    entry_price REAL,
+    exit_price  REAL,
+    gross       REAL,
+    swap        REAL,
+    commission  REAL,
+    net_usd     REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_forex_trade_close ON forex_trade(ts_close);
+
 -- Cached official USD/RUB rate by day.
 CREATE TABLE IF NOT EXISTS fx_rate (day TEXT PRIMARY KEY, rate REAL NOT NULL);
 

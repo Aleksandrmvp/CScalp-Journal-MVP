@@ -13,23 +13,68 @@ import re
 import sqlite3
 from datetime import datetime
 
-from . import db, forex, views
+from . import config, db, forex, views
+
+
+def _capital_cfg() -> dict:
+    """Capital settings (cscalp_settings.json -> "report"): capital_slots, capital_factor,
+    capital_level. Without them every slot counts and the last snapshot of the day wins."""
+    return config.USER.get("report", {}) or {}
+
+
+def _pick_level(vals: list[float]) -> float:
+    """Which of a day's snapshots of one slot is the account value. Some prop terminals
+    alternate two different TotalAssets values in a slot: 'max' takes the upper one (it matched
+    the broker's balance), 'min' the lower, 'last' (default) the last of the day."""
+    level = str(_capital_cfg().get("capital_level") or "last").lower()
+    if level == "min":
+        return min(vals)
+    if level == "max":
+        return max(vals)
+    return vals[-1]
 
 
 def _equity_by_day(con: sqlite3.Connection) -> list[tuple[str, float]]:
-    """[(day, total equity)] — last snapshot per slot per day, summed with carry-forward."""
+    """[(day, total equity)] — per slot per day (see _pick_level), summed with carry-forward.
+    capital_slots limits the slots that count, capital_factor divides a slot's number
+    (e.g. {"P2ED": 0.1} for a x10 prop leverage)."""
+    cfg = _capital_cfg()
+    slots = cfg.get("capital_slots")           # None / empty = every slot, as before
+    factor = cfg.get("capital_factor", {}) or {}
     rows = con.execute(
         "SELECT ts, slot, total_assets FROM money_snap WHERE total_assets IS NOT NULL ORDER BY ts"
     ).fetchall()
-    per_day: dict[str, dict[str, float]] = {}
+    per_day: dict[str, dict[str, list[float]]] = {}
     for r in rows:
-        per_day.setdefault(r["ts"][:10], {})[r["slot"]] = r["total_assets"]
+        if slots and r["slot"] not in slots:
+            continue
+        per_day.setdefault(r["ts"][:10], {}).setdefault(r["slot"], []).append(r["total_assets"])
     out: list[tuple[str, float]] = []
     carry: dict[str, float] = {}
     for day in sorted(per_day):
-        carry.update(per_day[day])
+        for slot, vals in per_day[day].items():
+            carry[slot] = _pick_level(vals) * float(factor.get(slot, 1.0))
         out.append((day, sum(carry.values())))
     return out
+
+
+def _capital_warning(con: sqlite3.Connection) -> str | None:
+    """Hint when the terminal's numbers look like they are not one account's money."""
+    cfg = _capital_cfg()
+    if cfg.get("capital_slots"):
+        return None
+    rows = con.execute("SELECT slot, substr(ts,1,10) d, MIN(total_assets) lo, MAX(total_assets) hi "
+                       "FROM money_snap WHERE total_assets IS NOT NULL GROUP BY slot, d").fetchall()
+    slots = sorted({r["slot"] for r in rows})
+    if len(slots) > 1:
+        return (f"В терминале несколько счетов (слоты {', '.join(slots)}), капитал суммируется по всем. "
+                "Если нужен один, впишите его слот в cscalp_settings.json: report.capital_slots.")
+    if str(cfg.get("capital_level") or "last").lower() == "last":
+        two = sorted({r["slot"] for r in rows if r["lo"] and r["hi"] / r["lo"] > 1.1})
+        if two:
+            return (f"В слоте {', '.join(two)} за день бывает два разных уровня активов, последний за день "
+                    "может быть неверным. Задайте report.capital_level = \"max\" в cscalp_settings.json.")
+    return None
 
 
 def _pos_setting(con: sqlite3.Connection, key: str) -> float | None:
@@ -43,7 +88,9 @@ def _pos_setting(con: sqlite3.Connection, key: str) -> float | None:
 def _scale(con: sqlite3.Connection) -> float:
     """Terminal 'total assets' -> user's real capital. The prop terminal reports the leveraged
     limit; the user anchors it once: capital_now at the terminal equity recorded in
-    capital_anchor_eq. 1.0 when no anchor is set."""
+    capital_anchor_eq. 1.0 when no anchor is set (or when capital_factor already divides it)."""
+    if _capital_cfg().get("capital_factor"):
+        return 1.0
     cap, anchor = _pos_setting(con, "capital_now"), _pos_setting(con, "capital_anchor_eq")
     if not (cap and anchor):
         return 1.0
@@ -443,8 +490,10 @@ def build(con: sqlite3.Connection, month: str | None = None) -> dict:
     capital = _capital_block(con, eq, k)
     if capital:
         capital["spills"] = spills
+        capital["warning"] = _capital_warning(con)
     base_out = {"month": month, "months": months, "empty": not in_month, "capital": capital,
-                "spills": [s for s in spills if s["day"][:7] == month]}
+                "spills": [s for s in spills if s["day"][:7] == month],
+                "fx": forex.month_block(con, month), "forex": _forex_legs(con, month)}
     led = _ledger_month(con, month, eq[0][0] if eq else None)
     if led:
         return {**base_out, **led}

@@ -18,7 +18,7 @@ from pydantic import BaseModel
 import re
 
 
-from . import config, ctrader, db, forex, ingest, notify, report, telegram, views
+from . import config, ctrader, db, forex, ingest, instruments_iss, notify, report, telegram, views
 from .report_page import REPORT_PAGE
 from .theme import BG_PATH, with_photo
 
@@ -33,6 +33,7 @@ def _ingest_thread() -> None:
 @app.on_event("startup")
 def _start_ingest() -> None:
     threading.Thread(target=_ingest_thread, daemon=True).start()
+    instruments_iss.start_background()
     threading.Thread(target=ctrader.loop, daemon=True).start()
 
 
@@ -344,6 +345,7 @@ _PAGE = r"""<!doctype html>
  .pill{font-size:11px;padding:1px 7px;border-radius:10px;color:#0f1115;font-weight:600}
  .tag{font-size:11px;padding:1px 6px;border-radius:4px;border:1px solid var(--line)}
  .taker{color:#e0a95f;border-color:#5a4a2a}.maker{color:#5f9fe0;border-color:#2a3f5a}.unknown{color:var(--mut)}
+ .forex{color:#a58be0;border-color:#3f2f5f}
  .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
  .pos-flat{color:var(--mut)} .neg{color:var(--sell)}.pos{color:var(--buy)}
  button{background:var(--btn);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer;font:inherit}
@@ -407,6 +409,10 @@ _PAGE = r"""<!doctype html>
      </span>
    </div>
    <div id="journal"></div>
+   <div class="bar" style="justify-content:flex-end;margin-top:8px;margin-bottom:0">
+     <label class=mut>На странице <select id="fPage2" onchange="setPageSize(this.value)"><option>50</option><option>100</option></select></label>
+     <button onclick="jprev()">←</button><span class=mut id="jpageinfo2"></span><button onclick="jnext()">→</button>
+   </div>
  </section>
 
  <section class="card"><h2>Telegram-канал</h2>
@@ -512,7 +518,11 @@ function renderJournal(){
   if(sig===_lastJournalJson)return;
   _lastJournalJson=sig;
   document.getElementById('jcount').textContent=`показано: ${total} из ${JOURNAL.length}`;
-  document.getElementById('jpageinfo').textContent=`стр ${jpage}/${pages}`;
+  const _pg=`стр ${jpage}/${pages}`;
+  document.getElementById('jpageinfo').textContent=_pg;
+  {const b2=document.getElementById('jpageinfo2');if(b2)b2.textContent=_pg;
+   const p1=document.getElementById('fPage'),p2=document.getElementById('fPage2'),v=String(jpsize);
+   if(p1&&p1.value!==v)p1.value=v; if(p2&&p2.value!==v)p2.value=v;}
   if(!rows.length){journal.innerHTML='<div class="mut">нет событий по фильтру</div>';return}
   let h='<table class=compact><tr><th class=chk><input type=checkbox id=selAll title="Выбрать все новые сделки на странице" onchange="selPage(this.checked)"></th><th class=l>Инструмент</th><th class=l>Связка</th><th class=l>Время</th><th class=l>Событие</th><th class=l>Сторона</th><th>Цена</th><th>Кол-во</th><th class=l>Ликвидность</th></tr>';
   for(const r of rows){
@@ -545,6 +555,7 @@ function renderBundles(bs){
     let spread='<span class=mut>—</span>';
     if(b.spread){
       if(b.spread.error){spread='<span class=warn>ошибка</span>';}
+      else if(b.spread.missing){spread='<span class=mut title="в последнем цикле нет всех ног формулы">—</span>';}
       else{
         const syn=Object.values(b.spread.bindings||{}).filter(x=>x.synthetic);
         if(syn.length){spread=syn.map(x=>`<b title="синтетическая цена — нет форекс-ноги">${x.formula||'синт.'} = ${fmt(x.price)}</b>`).join('<br>');}
@@ -752,7 +763,8 @@ async function load(){
     ? `PnL в пунктах (не в рублях): не задана стоимость пункта для ${t.points_only.join(', ')} — впишите шаг цены и его стоимость в cscalp_settings.json (раздел instruments, см. docs/УСТАНОВКА.md)`:'';
 
   // formula bindings from the latest trade's spread
-  const lastSp=t.trades.length?t.trades[t.trades.length-1].spread:null;
+  const spOk=t.trades.filter(x=>x.spread&&!x.spread.missing);
+  const lastSp=spOk.length?spOk[spOk.length-1].spread:null;   // latest cycle that has every formula leg
   const fb=document.getElementById('fbind');
   if(lastSp&&lastSp.error)fb.innerHTML=`<span class=warn>ошибка формулы: ${lastSp.error}</span>`;
   else if(lastSp)fb.innerHTML='сопоставление: '+Object.entries(lastSp.bindings).map(([s,b])=>{
@@ -781,7 +793,7 @@ async function load(){
     const trnet=tr.realized_net!==undefined?tr.realized_net:tr.realized_pnl;
     const pc=trnet>0?'pos':(trnet<0?'neg':'mut');
     const commNote=tr.commission?` <span class=mut>(−${fmtR(tr.commission)} комис.)</span>`:'';
-    const sp=tr.spread&&!tr.spread.error?`раздвижка входа: <b>${fmt(tr.spread.value)}%</b>`:'';
+    const sp=tr.spread&&tr.spread.missing?`<span class=mut>раздвижка: в этом цикле нет второй ноги</span>`:(tr.spread&&!tr.spread.error?`раздвижка входа: <b>${fmt(tr.spread.value)}%</b>`:'');
     const per=`${hhmmss(tr.entry_ts)} → ${tr.exit_ts&&tr.status==='closed'?hhmmss(tr.exit_ts):'…'}`;
     const pubBtns=`<button onclick="publish(${tr.idx},'open')" title="опубликовать открытие в канал">📢 открытие</button>`+
         (tr.status==='closed'?`<button onclick="publish(${tr.idx},'close')" title="опубликовать закрытие в канал">📢 закрытие</button>`:'');

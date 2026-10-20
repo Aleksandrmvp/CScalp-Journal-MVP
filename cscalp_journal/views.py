@@ -186,6 +186,12 @@ def journal(con: sqlite3.Connection) -> list[dict]:
             "liquidity": liq.get(r["order_id"], "unknown"), "id": r["trade_id"],
             "bundles": tb.get(r["trade_id"], []),
         })
+    for f in con.execute("SELECT ts_close,symbol,side,volume,exit_price FROM forex_trade").fetchall():
+        items.append({      # cTrader closing deal: the side is the opposite of the opening one
+            "ts": f["ts_close"], "event": "FILL", "ticker": f["symbol"],
+            "side": "Sell" if f["side"] == "Buy" else "Buy", "price": f["exit_price"],
+            "qty": f["volume"], "liquidity": "forex", "id": None, "bundles": [],
+        })
     items.sort(key=lambda x: x["ts"])
     return items
 
@@ -277,7 +283,8 @@ def _bundle_legs_sorted(con: sqlite3.Connection, bundle_id: int) -> list[dict]:
     return legs
 
 
-def _eval_spread(formula: str | None, entry_prices: dict[str, float]) -> dict | None:
+def _eval_spread(formula: str | None, entry_prices: dict[str, float],
+                 all_tickers: set[str] | None = None) -> dict | None:
     """Evaluate the user's spread formula over a trade's entry prices."""
     if not formula or not formula.strip():
         return None
@@ -294,8 +301,24 @@ def _eval_spread(formula: str | None, entry_prices: dict[str, float]) -> dict | 
             "synthetic": {k: round(v["price"], 6) for k, v in bindings.items()
                           if v.get("synthetic")},
         }
+    except KeyError as e:
+        # the formula fits the bundle's legs, but this cycle lacks one of them: not a formula error
+        if all_tickers and _symbols_resolvable(formula, set(all_tickers)):
+            return {"value": None, "error": None, "missing": True, "bindings": {}, "synthetic": {}}
+        return {"value": None, "error": str(e).strip("\"'"), "bindings": {}, "synthetic": {}}
     except Exception as e:
         return {"value": None, "error": str(e), "bindings": {}, "synthetic": {}}
+
+
+def _symbols_resolvable(formula: str, tickers: set[str]) -> bool:
+    """True when every symbol of the formula matches some leg of the bundle (ignoring cycles)."""
+    resolve, _ = formula_mod.build_resolver({t: 1.0 for t in tickers})
+    try:
+        for sym in formula_mod.symbols(formula):
+            resolve(sym)
+    except Exception:
+        return False
+    return True
 
 
 def _formula_coverage(formula: str | None, tickers: set[str]) -> dict:
@@ -380,6 +403,7 @@ def bundle_trades(con: sqlite3.Connection, bundle_id: int) -> dict:
             cur = None
 
     trades_out: list[dict] = []
+    all_legs = {l["ticker"] for l in legs}
     for idx, c in enumerate(cycles, 1):
         by_t: dict[str, list] = {}
         for f in c["fills"]:
@@ -401,7 +425,7 @@ def bundle_trades(con: sqlite3.Connection, bundle_id: int) -> dict:
             "commission": round(c["commission"], 6),
             "realized_net": round(c["realized"] - c["commission"], 6),
             "entry_prices": {t: round(p, 6) for t, p in entry_prices.items()},
-            "spread": _eval_spread(b["formula"], entry_prices),
+            "spread": _eval_spread(b["formula"], entry_prices, all_legs),
             "events": c["events"], "open_legs": open_legs,
         })
 

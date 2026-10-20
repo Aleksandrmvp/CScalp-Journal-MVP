@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 
-from . import config
+from . import config, instruments_iss
 
 # base symbol -> (step_size, step_value_rub)
 STEP: dict[str, tuple[float, float]] = {
@@ -28,8 +28,9 @@ STEP: dict[str, tuple[float, float]] = {
 }
 
 # user overrides: {"instruments": {"Si": {"step": 1.0, "step_value": 1.0}, ...}}
+_USER: dict[str, tuple[float, float]] = {}
 for _name, _v in config.USER.get("instruments", {}).items():
-    STEP[_name] = (float(_v["step"]), float(_v["step_value"]))
+    _USER[_name] = STEP[_name] = (float(_v["step"]), float(_v["step_value"]))
 
 _SUFFIX = re.compile(r"-\d{1,2}\.\d{2}$")   # FUT.Si-12.26 and FUT.Si-3.27 (one-digit month)
 
@@ -43,9 +44,14 @@ def base_symbol(ticker: str) -> str:
 
 
 def _step(ticker: str):
-    """Settings for the ticker; shares may be keyed 'TQBR.TATN' or just 'TATN'."""
+    """(step, step value): the user's own settings, then the MOEX ISS cache (shares may be keyed
+    'TQBR.TATN' or 'TATN'), then the built-in table."""
     b = base_symbol(ticker)
-    return STEP.get(b) or STEP.get(b.rsplit(".", 1)[-1])
+    tail = b.rsplit(".", 1)[-1]
+    for k in (b, tail):
+        if k in _USER:
+            return _USER[k]
+    return instruments_iss.lookup(ticker, b) or STEP.get(b) or STEP.get(tail)
 
 
 def point_value(ticker: str) -> float:

@@ -174,7 +174,8 @@ function capSection(c){
   if(!c)return '';
   const sc=c.scale!==1?`<br>активы терминала ${num(c.anchor.terminal_equity)} ₽ × ${num(c.scale,4)} (плечо проп-дилинга)`:'';
   const noStart=c.start==null;
-  return `<div class="trio cap4">
+  const warn=c.warning?`<div class="card warn" style="margin-bottom:10px">${c.warning}</div>`:'';
+  return warn+`<div class="trio cap4">
    <div class="card"><div class="lbl">Стартовый капитал</div><div class="val">${noStart?'—':num(c.start)+' ₽'}</div><div class="sm">${noStart?'задайте «Старт» вверху':'от него считается просадка'}${c.peak_manual?`<br>пик ${num(c.peak_manual)} ₽${c.peak_month?' · '+mlabel(c.peak_month):''}`:''}</div></div>
    <div class="card"><div class="lbl">Текущий капитал</div><div class="val">${num(c.current)} ₽</div><div class="sm">${noStart?'':`<span class="${cls(c.pnl_since_start)}">${sgn(c.pnl_since_start)} ₽ · ${sgn(c.return_since_start_pct,2)}%</span> от старта<br>`}на ${dmy(c.last_day)}${sc}</div></div>
    <div class="card"><div class="lbl">Текущая просадка</div><div class="val ${c.drawdown_pct>0?'neg':'pos'}">${c.drawdown_pct>0?'−':''}${num(c.drawdown_pct,2)}%</div><div class="sm">${c.drawdown_pct>0?`−${num(c.drawdown_rub)} ₽ от ${c.start?'старта':'пика'} ${num(c.reference)} ₽`:'капитал не ниже '+(c.start?'старта':'пика')}</div></div>
@@ -231,7 +232,7 @@ function render(d){
   if(document.activeElement!==pe)pe.value=cs&&cs.peak_manual?cs.peak_manual:'';
   if(document.activeElement!==pm)pm.value=cs&&cs.peak_month?cs.peak_month:'';
   const capHtml=capSection(cs);
-  if(d.empty){root.innerHTML=capHtml+`<div class="title"><h2>Итоги: ${mlabel(d.month)}</h2></div><div class="card mut">Нет данных об активах терминала за этот месяц.</div>`;return}
+  if(d.empty){const fxe=d.fx?`<div class="trio"><div class="card"><div class="lbl">Форекс-ноги</div><div class="val ${cls(d.fx.net_rub)}">${sgn(d.fx.net_rub)} ₽</div><div class="sm">${sgn(d.fx.net_usd)} USDT · ${d.fx.entries.length} записей · по курсу ЦБ на дату сделки</div></div></div><div class="sm" style="margin:4px 0 10px">Итого за ${mlabel(d.month)}: <b class="${cls(d.fx.net_rub)}">${sgn(d.fx.net_rub)} ₽</b> — только форекс-нога, данных MOEX за этот месяц нет.</div>`:'';root.innerHTML=capHtml+`<div class="title"><h2>Итоги: ${mlabel(d.month)}</h2></div>`+fxe+`<div class="card mut">Нет данных об активах терминала за этот месяц.</div>`;return}
   const t=d.trading, c=d.curve;
   const partial=d.source==='ledger'?' · по выписке брокера':(d.period.from_previous_month?'':` · данные с ${dmy(d.period.start)}`);
   const cs2=d.cash, KIND={funding:'фандинг',transfer_fee:'перенос',payout:'PayOut',profit:'прибыль',loss:'убыток',adjust:'корректировка',transfer:'перевод',excluded:'не учитывается',other:'прочее'};

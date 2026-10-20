@@ -181,25 +181,36 @@ def build_resolver(entry_prices: dict[str, float]):
     leg_base_price = {b: entry_prices[t] for b, t in leg_base.items()}
     bindings: dict[str, dict] = {}
 
-    def _match(canon: str):
-        if canon in leg_base:
-            return leg_base[canon]
-        for base, t in leg_base.items():            # prefix fallback
-            if base.startswith(canon) or canon.startswith(base):
-                return t
+    def _is_fut(t: str) -> bool:
+        return t.upper().startswith("FUT.")
+
+    def _match(canon: str, want_fut: bool):
+        """Candidates: exact base, prefix, currency spot. '.P' (TradingView perpetual) prefers a
+        futures leg, a symbol without '.P' prefers a stock/spot leg, so RUS:GAZP.P and RUS:GAZP
+        can land on FUT.GAZPF and TQBR.GAZP. With a single candidate the preference is moot."""
+        cands: list[str] = []
+        for t in [t for b, t in leg_base.items() if b == canon]:
+            cands.append(t)
+        for b, t in leg_base.items():               # prefix fallback
+            if (b.startswith(canon) or canon.startswith(b)) and t not in cands:
+                cands.append(t)
         for pair, spot in _SPOT.items():            # currency spot (TOM) instead of the perpetual
             if canon.startswith(pair):
-                for base, t in leg_base.items():
-                    if re.sub(r"[^A-Z]", "", base) in spot:
-                        return t
-        return None
+                for b, t in leg_base.items():
+                    if re.sub(r"[^A-Z]", "", b) in spot and t not in cands:
+                        cands.append(t)
+        if not cands:
+            return None
+        chosen = [t for t in cands if _is_fut(t) == want_fut]
+        return (chosen or cands)[0]
 
     def resolve(sym: str) -> float:
         c = _core(sym)                              # e.g. CR, GD, CNYRUB
-        t = _match(_TVALIAS.get(c, c))
+        want_fut = ".P" in sym.upper()
+        t = _match(_TVALIAS.get(c, c), want_fut)
         if t is None and len(c) >= 3:               # dated code e.g. GDZ2026 -> GDZ -> GD
             c2 = c[:-1]
-            t = _match(_TVALIAS.get(c2, c2))
+            t = _match(_TVALIAS.get(c2, c2), want_fut)
         if t is not None:
             bindings[sym] = {"ticker": t, "price": entry_prices[t]}
             return entry_prices[t]

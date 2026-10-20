@@ -104,18 +104,35 @@ def closing_net(gross: float, swap: float, commission: float) -> float:
 
 
 def _deal_rows(deals, names: dict) -> list[dict]:
-    """Closing deals -> forex_result rows."""
+    """Closing deals -> rows for forex_trade (+ forex_result). A position's opening deal is in
+    the same deal list (it just has no closePositionDetail): the earliest deal of a positionId
+    gives the open time and side."""
+    openings: dict[int, list] = {}
+    for d in deals:
+        if not d.HasField("closePositionDetail"):
+            openings.setdefault(d.positionId, []).append(d)
     rows = []
     for d in deals:
         if not d.HasField("closePositionDetail"):
             continue
         cp = d.closePositionDetail
         scale = 10 ** (cp.moneyDigits or d.moneyDigits or 2)
-        net = closing_net(cp.grossProfit / scale, cp.swap / scale, cp.commission / scale)
-        day = datetime.fromtimestamp(d.executionTimestamp / 1000).strftime("%Y-%m-%d")
+        gross, swap, comm = cp.grossProfit / scale, cp.swap / scale, abs(cp.commission) / scale
+        net = closing_net(gross, swap, comm)
+        ts = datetime.fromtimestamp(d.executionTimestamp / 1000)
+        first = sorted(openings.get(d.positionId, []), key=lambda x: x.executionTimestamp)
+        ts_open = datetime.fromtimestamp(first[0].executionTimestamp / 1000) if first else ts
+        # tradeSide: 1 = BUY, 2 = SELL; without the opening deal the opposite of the closing side
+        open_buy = (first[0].tradeSide == 1) if first else (d.tradeSide == 2)
         name = names.get(d.symbolId, str(d.symbolId))
-        rows.append({"id": f"ct:{d.dealId}", "day": day, "usd": round(net, 2),
-                     "note": f"{name}, закрыто {cp.closedVolume / 100:g} ед. по {d.executionPrice:g}"})
+        rows.append({"id": f"ct:{d.dealId}", "day": ts.strftime("%Y-%m-%d"), "usd": round(net, 2),
+                     "note": f"{name}, закрыто {cp.closedVolume / 100:g} ед. по {d.executionPrice:g}",
+                     "position_id": str(d.positionId), "symbol": name,
+                     "ts_open": ts_open.strftime("%Y-%m-%d %H:%M:%S"),
+                     "ts_close": ts.strftime("%Y-%m-%d %H:%M:%S"),
+                     "side": "Buy" if open_buy else "Sell", "volume": cp.closedVolume / 100,
+                     "entry_price": cp.entryPrice, "exit_price": d.executionPrice,
+                     "gross": round(gross, 2), "swap": round(swap, 2), "commission": round(comm, 2)})
     return rows
 
 
@@ -126,6 +143,15 @@ def _store(con, rows: list[dict]) -> int:
             "INSERT INTO forex_result(id,day,usd,note,source) VALUES(?,?,?,?,'api') "
             "ON CONFLICT(id) DO UPDATE SET usd=excluded.usd, note=excluded.note, day=excluded.day",
             (r["id"], r["day"], r["usd"], r["note"])).rowcount
+        con.execute(
+            "INSERT INTO forex_trade(id,position_id,ts_open,ts_close,symbol,side,volume,entry_price,"
+            "exit_price,gross,swap,commission,net_usd) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET ts_open=excluded.ts_open, ts_close=excluded.ts_close, "
+            "side=excluded.side, volume=excluded.volume, entry_price=excluded.entry_price, "
+            "exit_price=excluded.exit_price, gross=excluded.gross, swap=excluded.swap, "
+            "commission=excluded.commission, net_usd=excluded.net_usd",
+            (r["id"], r["position_id"], r["ts_open"], r["ts_close"], r["symbol"], r["side"], r["volume"],
+             r["entry_price"], r["exit_price"], r["gross"], r["swap"], r["commission"], r["usd"]))
     con.commit()
     return added
 
@@ -154,6 +180,8 @@ def run_sync() -> dict:
     first_ms = (int(datetime.strptime(cfg["history_from"], "%Y-%m-%d").timestamp() * 1000)
                 if cfg.get("history_from") else now_ms - LOOKBACK_DAYS * 86400 * 1000)
     since_ms = int(db.get_setting(con, "ctrader_since_ms") or 0) or first_ms
+    if not con.execute("SELECT COUNT(*) FROM forex_trade").fetchone()[0]:
+        since_ms = first_ms      # forex_trade is new: read the whole history once to fill it
     client = Client(EndPoints.PROTOBUF_LIVE_HOST, EndPoints.PROTOBUF_PORT, TcpProtocol)
 
     def reply(msg):
