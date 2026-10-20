@@ -709,6 +709,8 @@ const fmtR=n=>n===null||n===undefined?'':n.toLocaleString('ru-RU',{minimumFracti
 const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const id=parseInt(location.pathname.split('/').pop());
 const hhmmss=t=>t?(t.split(' ')[1]||t):'—';
+const dtm=t=>{if(!t)return '—';const p=String(t).split(' ');if(p.length<2)return String(t);const d=p[0];
+  return `${d.slice(8,10)}.${d.slice(5,7)}.${d.slice(2,4)} ${p[1]}`};
 const sideCls=s=>s==='Buy'?'buy':'sell';
 async function post(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})}
 async function put(u,b){return fetch(u,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)})}
@@ -724,7 +726,7 @@ function eventsTable(events){
     const rm=e.kind==='manual'
       ? `<button class=danger title="удалить эту ногу" onclick="delEvent('manual',${e.ref})">✕</button>`
       : `<button class=danger title="убрать эту сделку из связки" onclick="delEvent('internal','${e.ref}')">✕</button>`;
-    h+=`<tr><td class=l>${hhmmss(e.ts)}</td><td class=l><span class="pill ${e.action}">${e.action}</span></td><td class=l>${e.venue}</td><td class=l>${e.ticker}</td><td class="l ${sideCls(e.side)}">${e.side}</td><td>${fmt(e.price)}</td><td>${fmt(e.qty)}</td><td class=l>${liq}</td><td>${fmt(e.net_after)}</td><td class="${rc}">${e.realized_leg?fmtR(e.realized_leg):''}</td><td>${fmtR(e.realized_cum)}</td><td>${rm}</td></tr>`;
+    h+=`<tr><td class=l>${dtm(e.ts)}</td><td class=l><span class="pill ${e.action}">${e.action}</span></td><td class=l>${e.venue}</td><td class=l>${e.ticker}</td><td class="l ${sideCls(e.side)}">${e.side}</td><td>${fmt(e.price)}</td><td>${fmt(e.qty)}</td><td class=l>${liq}</td><td>${fmt(e.net_after)}</td><td class="${rc}">${e.realized_leg?fmtR(e.realized_leg):''}</td><td>${fmtR(e.realized_cum)}</td><td>${rm}</td></tr>`;
   }
   return h+'</table>';
 }
@@ -794,7 +796,7 @@ async function load(){
     const pc=trnet>0?'pos':(trnet<0?'neg':'mut');
     const commNote=tr.commission?` <span class=mut>(−${fmtR(tr.commission)} комис.)</span>`:'';
     const sp=tr.spread&&tr.spread.missing?`<span class=mut>раздвижка: в этом цикле нет второй ноги</span>`:(tr.spread&&!tr.spread.error?`раздвижка входа: <b>${fmt(tr.spread.value)}%</b>`:'');
-    const per=`${hhmmss(tr.entry_ts)} → ${tr.exit_ts&&tr.status==='closed'?hhmmss(tr.exit_ts):'…'}`;
+    const per=`${dtm(tr.entry_ts)} → ${tr.exit_ts&&tr.status==='closed'?dtm(tr.exit_ts):'…'}`;
     const pubBtns=`<button onclick="publish(${tr.idx},'open')" title="опубликовать открытие в канал">📢 открытие</button>`+
         (tr.status==='closed'?`<button onclick="publish(${tr.idx},'close')" title="опубликовать закрытие в канал">📢 закрытие</button>`:'');
     th+=`<div class=trade><h3>Сделка #${tr.idx} ${st}<span class=mut>${per}</span>`+
@@ -824,7 +826,7 @@ function renderLegs(){
     const bad=(COV.uncovered||[]).includes(l.ticker);
     const rst=bad?' style="background:rgba(224,98,95,0.12)"':'';
     const warn=bad?' <span class=warn title="инструмент не сопоставлен с формулой">⚠ не в формуле</span>':'';
-    lh+=`<tr${rst}><td class=l><span class=mut>${l.venue}</span></td><td class=l>${l.ticker}${warn}</td><td class="l ${sideCls(l.side)}">${l.side}</td><td>${fmt(l.price)}</td><td>${fmt(l.qty)}</td><td class=l>${hhmmss(l.ts)}</td><td>${rm}</td></tr>`;
+    lh+=`<tr${rst}><td class=l><span class=mut>${l.venue}</span></td><td class=l>${l.ticker}${warn}</td><td class="l ${sideCls(l.side)}">${l.side}</td><td>${fmt(l.price)}</td><td>${fmt(l.qty)}</td><td class=l>${dtm(l.ts)}</td><td>${rm}</td></tr>`;
   }
   document.getElementById('legs').innerHTML=lh+'</table>'+pagerHtml(legPage,pages,total,'legNav');
 }
@@ -838,7 +840,7 @@ function renderUnassigned(){
   let uh='<table><tr><th class=l>Время</th><th class=l>Инструмент</th><th class=l>Сторона</th><th>Цена</th><th>Кол-во</th><th class=l>Ликв.</th><th></th></tr>';
   for(const f of page){
     const liq=f.liquidity?`<span class="tag ${f.liquidity}">${f.liquidity}</span>`:'';
-    uh+=`<tr><td class=l>${hhmmss(f.ts)}</td><td class=l>${f.ticker}</td><td class="l ${sideCls(f.side)}">${f.side}</td><td>${fmt(f.price)}</td><td>${fmt(f.qty)}</td><td class=l>${liq}</td><td><button class=primary onclick="addFill('${f.trade_id}')">+</button></td></tr>`;
+    uh+=`<tr><td class=l>${dtm(f.ts)}</td><td class=l>${f.ticker}</td><td class="l ${sideCls(f.side)}">${f.side}</td><td>${fmt(f.price)}</td><td>${fmt(f.qty)}</td><td class=l>${liq}</td><td><button class=primary onclick="addFill('${f.trade_id}')">+</button></td></tr>`;
   }
   document.getElementById('unassigned').innerHTML=uh+'</table>'+pagerHtml(unPage,pages,total,'unNav');
 }

@@ -130,6 +130,17 @@ CREATE TABLE IF NOT EXISTS forex_trade (
 );
 CREATE INDEX IF NOT EXISTS ix_forex_trade_close ON forex_trade(ts_close);
 
+-- Currently open cTrader positions (rewritten on every sync); a position that closes arrives as
+-- a normal deal in forex_trade.
+CREATE TABLE IF NOT EXISTS forex_open (
+    position_id TEXT PRIMARY KEY,
+    symbol      TEXT NOT NULL,
+    side        TEXT NOT NULL,
+    volume      REAL NOT NULL,
+    entry_price REAL,
+    ts_open     TEXT
+);
+
 -- Cached official USD/RUB rate by day.
 CREATE TABLE IF NOT EXISTS fx_rate (day TEXT PRIMARY KEY, rate REAL NOT NULL);
 
@@ -182,6 +193,10 @@ def connect() -> sqlite3.Connection:
         con.execute("ALTER TABLE bundle ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
     except sqlite3.OperationalError:
         pass
+    # an earlier build stored the close time as the open time when the opening deal was not in the
+    # sync window; such a zero-length trade is unknown, not real (the next sync refills it)
+    con.execute("UPDATE forex_trade SET ts_open=NULL WHERE ts_open=ts_close")
+    con.commit()
     return con
 
 

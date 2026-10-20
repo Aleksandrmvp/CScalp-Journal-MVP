@@ -121,14 +121,15 @@ def _deal_rows(deals, names: dict) -> list[dict]:
         net = closing_net(gross, swap, comm)
         ts = datetime.fromtimestamp(d.executionTimestamp / 1000)
         first = sorted(openings.get(d.positionId, []), key=lambda x: x.executionTimestamp)
-        ts_open = datetime.fromtimestamp(first[0].executionTimestamp / 1000) if first else ts
+        # no opening deal in the window: unknown (NULL), not "now" - a zero-length trade is wrong
+        ts_open = datetime.fromtimestamp(first[0].executionTimestamp / 1000) if first else None
         # tradeSide: 1 = BUY, 2 = SELL; without the opening deal the opposite of the closing side
         open_buy = (first[0].tradeSide == 1) if first else (d.tradeSide == 2)
         name = names.get(d.symbolId, str(d.symbolId))
         rows.append({"id": f"ct:{d.dealId}", "day": ts.strftime("%Y-%m-%d"), "usd": round(net, 2),
                      "note": f"{name}, закрыто {cp.closedVolume / 100:g} ед. по {d.executionPrice:g}",
                      "position_id": str(d.positionId), "symbol": name,
-                     "ts_open": ts_open.strftime("%Y-%m-%d %H:%M:%S"),
+                     "ts_open": ts_open.strftime("%Y-%m-%d %H:%M:%S") if ts_open else None,
                      "ts_close": ts.strftime("%Y-%m-%d %H:%M:%S"),
                      "side": "Buy" if open_buy else "Sell", "volume": cp.closedVolume / 100,
                      "entry_price": cp.entryPrice, "exit_price": d.executionPrice,
@@ -146,19 +147,43 @@ def _store(con, rows: list[dict]) -> int:
         con.execute(
             "INSERT INTO forex_trade(id,position_id,ts_open,ts_close,symbol,side,volume,entry_price,"
             "exit_price,gross,swap,commission,net_usd) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) "
-            "ON CONFLICT(id) DO UPDATE SET ts_open=excluded.ts_open, ts_close=excluded.ts_close, "
+            "ON CONFLICT(id) DO UPDATE SET ts_open=COALESCE(excluded.ts_open, forex_trade.ts_open), "
+            "ts_close=excluded.ts_close, "
             "side=excluded.side, volume=excluded.volume, entry_price=excluded.entry_price, "
             "exit_price=excluded.exit_price, gross=excluded.gross, swap=excluded.swap, "
             "commission=excluded.commission, net_usd=excluded.net_usd",
             (r["id"], r["position_id"], r["ts_open"], r["ts_close"], r["symbol"], r["side"], r["volume"],
              r["entry_price"], r["exit_price"], r["gross"], r["swap"], r["commission"], r["usd"]))
+        con.execute("DELETE FROM forex_open WHERE position_id=?", (r["position_id"],))
     con.commit()
     return added
 
 
+def _open_rows(positions, names: dict) -> list[dict]:
+    """ProtoOAReconcileRes.position -> rows for forex_open (positions that are still open)."""
+    rows = []
+    for p in positions:
+        td = p.tradeData
+        rows.append({"position_id": str(p.positionId), "symbol": names.get(td.symbolId, str(td.symbolId)),
+                     "side": "Buy" if td.tradeSide == 1 else "Sell", "volume": td.volume / 100,
+                     "entry_price": p.price,
+                     "ts_open": datetime.fromtimestamp(td.openTimestamp / 1000).strftime("%Y-%m-%d %H:%M:%S")})
+    return rows
+
+
+def _store_open(con, rows: list[dict]) -> None:
+    con.execute("DELETE FROM forex_open")
+    for r in rows:
+        con.execute("INSERT OR REPLACE INTO forex_open(position_id,symbol,side,volume,entry_price,ts_open) "
+                    "VALUES(?,?,?,?,?,?)", (r["position_id"], r["symbol"], r["side"], r["volume"],
+                                            r["entry_price"], r["ts_open"]))
+    con.commit()
+
+
 # ---------------------------------------------------------------- sync (runs in a subprocess)
 def run_sync() -> dict:
-    result: dict = {"accounts": 0, "deals": 0, "positions": 0, "error": None}
+    result: dict = {"accounts": 0, "deals": 0, "closed": 0, "open": 0, "error": None}
+    open_rows: list[dict] = []
     cfg, token = load_config(), None
     if not is_configured():
         return {**result, "error": "в ctrader.json нет ключей"}
@@ -172,7 +197,7 @@ def run_sync() -> dict:
     from ctrader_open_api import Client, EndPoints, Protobuf, TcpProtocol
     from ctrader_open_api.messages.OpenApiMessages_pb2 import (
         ProtoOAAccountAuthReq, ProtoOAApplicationAuthReq, ProtoOADealListReq,
-        ProtoOAGetAccountListByAccessTokenReq, ProtoOASymbolsListReq)
+        ProtoOAGetAccountListByAccessTokenReq, ProtoOAReconcileReq, ProtoOASymbolsListReq)
     from twisted.internet import defer, reactor
 
     con = db.connect()
@@ -213,6 +238,7 @@ def run_sync() -> dict:
                         result.setdefault("account_errors", []).append(f"{acc.traderLogin}: {e}{hint}")
         forex.ensure_rates(con)
         if not result.get("account_errors"):
+            _store_open(con, open_rows)
             # re-read a few days back next time so late-posted closings are not missed
             db.set_setting(con, "ctrader_since_ms", str(now_ms - 3 * 86400 * 1000))
 
@@ -232,10 +258,32 @@ def run_sync() -> dict:
             req.fromTimestamp, req.toTimestamp, req.maxRows = t, min(t + _WEEK_MS, now_ms), 1000
             deals.extend(reply((yield client.send(req, responseTimeoutInSeconds=60))).deal)
             t += _WEEK_MS
+        # closing deals whose opening deal is older than the window (and whose open time is still
+        # unknown) -> read the older history once so ts_open gets filled
+        opened = {d.positionId for d in deals if not d.HasField("closePositionDetail")}
+        orphans = [f"ct:{d.dealId}" for d in deals
+                   if d.HasField("closePositionDetail") and d.positionId not in opened]
+        if orphans and since_ms > first_ms:
+            known = {r[0] for r in con.execute(
+                "SELECT id FROM forex_trade WHERE ts_open IS NOT NULL AND id IN (%s)" % ",".join("?" * len(orphans)),
+                orphans)}
+            if len(known) < len(orphans):
+                t = first_ms
+                while t < since_ms:
+                    req = ProtoOADealListReq()
+                    req.ctidTraderAccountId = acc.ctidTraderAccountId
+                    req.fromTimestamp, req.toTimestamp, req.maxRows = t, min(t + _WEEK_MS, since_ms), 1000
+                    deals.extend(reply((yield client.send(req, responseTimeoutInSeconds=60))).deal)
+                    t += _WEEK_MS
         rows = _deal_rows(deals, names)
+        rows = [r for r in rows if r["ts_close"] >= datetime.fromtimestamp(since_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")]
         result["deals"] += len(deals)
-        result["positions"] += len(rows)
+        result["closed"] += len(rows)
         _store(con, rows)
+        req = ProtoOAReconcileReq()
+        req.ctidTraderAccountId = acc.ctidTraderAccountId
+        open_rows.extend(_open_rows(reply((yield client.send(req, responseTimeoutInSeconds=30))).position, names))
+        result["open"] = len(open_rows)
 
     def done(_):
         if reactor.running:

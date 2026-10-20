@@ -192,6 +192,11 @@ def journal(con: sqlite3.Connection) -> list[dict]:
             "side": "Sell" if f["side"] == "Buy" else "Buy", "price": f["exit_price"],
             "qty": f["volume"], "liquidity": "forex", "id": None, "bundles": [],
         })
+    for f in con.execute("SELECT ts_open,symbol,side,volume,entry_price FROM forex_open").fetchall():
+        items.append({      # still open cTrader position: shown as its opening fill
+            "ts": f["ts_open"] or "", "event": "FILL", "ticker": f["symbol"], "side": f["side"],
+            "price": f["entry_price"], "qty": f["volume"], "liquidity": "forex", "id": None, "bundles": [],
+        })
     items.sort(key=lambda x: x["ts"])
     return items
 

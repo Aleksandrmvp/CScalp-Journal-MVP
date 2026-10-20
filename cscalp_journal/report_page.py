@@ -331,7 +331,7 @@ async function ctLoad(){
     if(!s.connected){el.textContent='Не подключено. Нажмите «Подключить cTrader» и разрешите доступ в своём cTrader ID.';return}
     if(!r){el.textContent='Подключено, синхронизации ещё не было.';return}
     el.innerHTML=r.error?`Подключено. Последняя синхронизация ${when} не удалась: <span class="warn">${esc(r.error)}</span>`
-      :`Подключено. Синхронизация ${when}: счетов ${r.accounts}, обновлено позиций ${r.positions}; всего из cTrader в дневнике ${s.stored}. Обновляется каждые 15 минут.${(r.account_errors||[]).length?` <span class="warn">Ошибки по счетам: ${esc(r.account_errors.join('; '))}</span>`:''}`;
+      :`Подключено. Синхронизация ${when}: счетов ${r.accounts}, закрытых сделок ${r.closed??r.positions}, открытых позиций ${r.open??0}; всего из cTrader в дневнике ${s.stored}. Обновляется каждые 15 минут.${(r.account_errors||[]).length?` <span class="warn">Ошибки по счетам: ${esc(r.account_errors.join('; '))}</span>`:''}`;
   }catch(e){}
 }
 async function ctSync(){
