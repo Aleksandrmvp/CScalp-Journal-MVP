@@ -6,10 +6,11 @@ which are not in the logs yet. Kept honest until those are provided.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime
 
-from . import config, commission, instruments, formula as formula_mod
+from . import config, commission, forex, instruments, formula as formula_mod
 
 
 def _order_liquidity(con: sqlite3.Connection) -> dict[str, str]:
@@ -168,6 +169,69 @@ def _trade_bundles(con: sqlite3.Connection) -> dict[str, list[dict]]:
     return out
 
 
+_CUTOFF = os.environ.get("CSCALP_FX_CUTOFF", "1").strip().lower() not in ("0", "false", "no")
+# quote currency of a forex symbol (the leg is converted to RUB at the CBR rate of that currency)
+_QUOTE = {"EURUSD": "USD", "XAUUSD": "USD", "XAGUSD": "USD", "XPTUSD": "USD", "XPDUSD": "USD",
+          "ETHUSD": "USD", "BTCUSD": "USD", "USDCNH": "CNY", "EURCNH": "CNY"}
+
+
+def _forex_map() -> dict:
+    """Forex symbol -> the MOEX INSTRUMENT it hedges (settings: forex_instruments). Keyed by
+    instrument, not by bundle name: names are the user's to change, instruments are not."""
+    m = {"EURUSD_xp": "ED", "XAUUSD_xp": "GOLD", "USDCNH_xp": "UCNY"}
+    m.update(config.USER.get("forex_instruments") or {})
+    return m
+
+
+def _auto_map(con: sqlite3.Connection) -> dict[str, list[int]]:
+    """MOEX instrument (lowercase base symbol) -> bundles that contain it."""
+    out: dict[str, list[int]] = {}
+    for r in con.execute("SELECT DISTINCT m.bundle_id, t.ticker FROM bundle_member m "
+                         "JOIN trade t ON t.trade_id=m.trade_id"):
+        ids = out.setdefault(instruments.base_symbol(r["ticker"]).lower(), [])
+        if r["bundle_id"] not in ids:
+            ids.append(r["bundle_id"])
+    return out
+
+
+def _auto_bundles(automap: dict[str, list[int]], symbol: str) -> list[int]:
+    """Bundle for a forex symbol by the symbol rule. None or several matches: no auto-binding
+    (a trade must not count twice) - the user ticks it in the journal."""
+    target = str(_forex_map().get(symbol) or "").strip().lower()
+    ids = automap.get(target) or []
+    return list(ids) if len(ids) == 1 else []
+
+
+def _bundle_since(con: sqlite3.Connection, bundle_id: int, cache: dict | None = None) -> str:
+    """Time of the bundle's first MOEX fill: older automatic forex trades have no MOEX half."""
+    if cache is not None and bundle_id in cache:
+        return cache[bundle_id]
+    row = con.execute("SELECT MIN(t.ts) FROM bundle_member m JOIN trade t ON t.trade_id=m.trade_id "
+                      "WHERE m.bundle_id=?", (bundle_id,)).fetchone()
+    val = (row[0] if row else None) or ""
+    if cache is not None:
+        cache[bundle_id] = val
+    return val
+
+
+def _forex_bundles(con, key: str, symbol: str, ts: str | None, automap=None, since=None) -> list[dict]:
+    """Bundle mark of a cTrader journal row: manual binding first, else the symbol rule (cut off
+    by date). A manual binding is the user's decision and is never cut off."""
+    row = con.execute("SELECT bundle_id FROM forex_bundle_member WHERE deal_id=?", (key,)).fetchone()
+    if row:
+        if row["bundle_id"] is None:        # taken out by the user
+            return []
+        bids = [row["bundle_id"]]
+    else:
+        bids = [b for b in _auto_bundles(automap if automap is not None else _auto_map(con), symbol)
+                if not (_CUTOFF and ts and ts < _bundle_since(con, b, since))]
+    out = []
+    for bid in bids:
+        b = con.execute("SELECT name FROM bundle WHERE id=?", (bid,)).fetchone()
+        out.append({"id": bid, "name": b["name"] if b else str(bid)})
+    return out
+
+
 def journal(con: sqlite3.Connection) -> list[dict]:
     """Merged chronological action log: submits, cancels, fills."""
     liq = _order_liquidity(con)
@@ -186,16 +250,21 @@ def journal(con: sqlite3.Connection) -> list[dict]:
             "liquidity": liq.get(r["order_id"], "unknown"), "id": r["trade_id"],
             "bundles": tb.get(r["trade_id"], []),
         })
-    for f in con.execute("SELECT ts_close,symbol,side,volume,exit_price FROM forex_trade").fetchall():
+    automap, since = _auto_map(con), {}
+    for f in con.execute("SELECT id,ts_close,symbol,side,volume,exit_price FROM forex_trade").fetchall():
+        key = "fx:" + f["id"]
         items.append({      # cTrader closing deal: the side is the opposite of the opening one
             "ts": f["ts_close"], "event": "FILL", "ticker": f["symbol"],
             "side": "Sell" if f["side"] == "Buy" else "Buy", "price": f["exit_price"],
-            "qty": f["volume"], "liquidity": "forex", "id": None, "bundles": [],
+            "qty": f["volume"], "liquidity": "forex", "id": key, "venue": "forex",
+            "bundles": _forex_bundles(con, key, f["symbol"], f["ts_close"], automap, since),
         })
-    for f in con.execute("SELECT ts_open,symbol,side,volume,entry_price FROM forex_open").fetchall():
+    for f in con.execute("SELECT position_id,ts_open,symbol,side,volume,entry_price FROM forex_open").fetchall():
+        key = "pos:" + str(f["position_id"])
         items.append({      # still open cTrader position: shown as its opening fill
             "ts": f["ts_open"] or "", "event": "FILL", "ticker": f["symbol"], "side": f["side"],
-            "price": f["entry_price"], "qty": f["volume"], "liquidity": "forex", "id": None, "bundles": [],
+            "price": f["entry_price"], "qty": f["volume"], "liquidity": "forex", "id": key,
+            "venue": "forex", "bundles": _forex_bundles(con, key, f["symbol"], f["ts_open"], automap, since),
         })
     items.sort(key=lambda x: x["ts"])
     return items
@@ -284,7 +353,64 @@ def _bundle_legs_sorted(con: sqlite3.Connection, bundle_id: int) -> list[dict]:
         legs.append({"kind": "manual", "ref": r["id"], "venue": r["venue"] or "manual",
                      "ts": r["ts"] or "", "ticker": r["ticker"], "side": r["side"],
                      "price": r["price"], "qty": r["qty"], "liquidity": None})
+    since = min((l["ts"] for l in legs if l.get("ts")), default=None)
+    legs.extend(_forex_legs(con, bundle_id, since))
     legs.sort(key=lambda l: (l["ts"] or "9999"))
+    return legs
+
+
+def _forex_legs(con: sqlite3.Connection, bundle_id: int, since: str | None) -> list[dict]:
+    """cTrader legs of a bundle: an opening and a closing leg per closed trade, one opening leg per
+    open position. Prices are in RUB (CBR rate of the quote currency) so MOEX and forex add up;
+    `native` keeps the pair's own price for the spread formula. The closing price is shifted by
+    net result / volume, so the leg gives exactly the net result (swap and commission included).
+    qty is the volume in base currency (EURUSD 10 000 = 0.1 lot). No rate -> the leg is skipped."""
+    automap = _auto_map(con)
+    legs: list[dict] = []
+
+    def mine(key: str, symbol: str, ts: str | None) -> bool:
+        fixed = con.execute("SELECT bundle_id FROM forex_bundle_member WHERE deal_id=?", (key,)).fetchone()
+        if fixed:
+            return fixed["bundle_id"] == bundle_id          # NULL never equals
+        if bundle_id not in _auto_bundles(automap, symbol):
+            return False
+        return not (_CUTOFF and since and ts and ts < since)
+
+    def rate_for(symbol: str, ts: str):
+        rates = forex.rub_rates(con, ts[:10])
+        quote = _QUOTE.get(str(symbol).split("_")[0].upper(), "USD")
+        return quote, rates, rates.get(quote)
+
+    for t in con.execute("SELECT id,ts_open,ts_close,symbol,side,volume,entry_price,net_usd FROM forex_trade "
+                         "ORDER BY ts_close").fetchall():
+        key = "fx:" + t["id"]
+        if not (t["ts_open"] and t["ts_close"]) or not mine(key, t["symbol"], t["ts_close"]):
+            continue
+        quote, rates, rate = rate_for(t["symbol"], t["ts_close"])
+        entry, vol, net = float(t["entry_price"] or 0), float(t["volume"] or 0), float(t["net_usd"] or 0)
+        if not (rate and entry and vol):
+            continue
+        side = "Buy" if str(t["side"]).lower().startswith("b") else "Sell"
+        delta = net / vol
+        if quote != "USD":
+            delta *= rates["USD"] / rates["CNY"]            # net is in USD, the pair quotes in CNY
+        close_eff = entry + (1 if side == "Buy" else -1) * delta
+        legs.append({"kind": "forex", "ref": key, "venue": "forex", "ts": t["ts_open"], "ticker": t["symbol"],
+                     "side": side, "price": round(entry * rate, 8), "native": round(entry, 8),
+                     "qty": vol, "liquidity": None})
+        legs.append({"kind": "forex", "ref": key, "venue": "forex", "ts": t["ts_close"], "ticker": t["symbol"],
+                     "side": "Sell" if side == "Buy" else "Buy", "price": round(close_eff * rate, 8),
+                     "native": round(close_eff, 8), "qty": vol, "liquidity": None})
+    for p in con.execute("SELECT position_id,ts_open,symbol,side,volume,entry_price FROM forex_open").fetchall():
+        key = "pos:" + str(p["position_id"])
+        if not p["ts_open"] or not mine(key, p["symbol"], p["ts_open"]):
+            continue
+        quote, rates, rate = rate_for(p["symbol"], p["ts_open"])
+        if not (rate and p["entry_price"] and p["volume"]):
+            continue
+        legs.append({"kind": "forex", "ref": key, "venue": "forex", "ts": p["ts_open"], "ticker": p["symbol"],
+                     "side": p["side"], "price": round(p["entry_price"] * rate, 8),
+                     "native": round(p["entry_price"], 8), "qty": p["volume"], "liquidity": None})
     return legs
 
 
@@ -342,6 +468,12 @@ def _formula_coverage(formula: str | None, tickers: set[str]) -> dict:
     covered = {b["ticker"] for b in bindings.values() if not b.get("defaulted")}
     return {"has_formula": True, "covered": sorted(covered),
             "uncovered": sorted(t for t in tickers if t not in covered)}
+
+
+def _forex_tickers(con: sqlite3.Connection) -> set[str]:
+    """cTrader symbols: their legs are already in RUB, so they are never 'points only'."""
+    return ({r[0] for r in con.execute("SELECT DISTINCT symbol FROM forex_trade")}
+            | {r[0] for r in con.execute("SELECT DISTINCT symbol FROM forex_open")})
 
 
 def bundle_trades(con: sqlite3.Connection, bundle_id: int) -> dict:
@@ -414,11 +546,14 @@ def bundle_trades(con: sqlite3.Connection, bundle_id: int) -> dict:
         for f in c["fills"]:
             by_t.setdefault(f["ticker"], []).append(f)
         entry_prices: dict[str, float] = {}
+        native_prices: dict[str, float] = {}      # the formula is written in the pairs' own prices
         for t, fs in by_t.items():
             oside = fs[0]["side"]
             num = sum(x["qty"] * x["price"] for x in fs if x["side"] == oside)
+            numn = sum(x["qty"] * (x.get("native") or x["price"]) for x in fs if x["side"] == oside)
             den = sum(x["qty"] for x in fs if x["side"] == oside)
             entry_prices[t] = num / den if den else fs[0]["price"]
+            native_prices[t] = numn / den if den else (fs[0].get("native") or fs[0]["price"])
         open_legs = []
         if c["status"] == "open":
             open_legs = [{"ticker": t, "net_qty": round(v["qty"], 8),
@@ -430,7 +565,7 @@ def bundle_trades(con: sqlite3.Connection, bundle_id: int) -> dict:
             "commission": round(c["commission"], 6),
             "realized_net": round(c["realized"] - c["commission"], 6),
             "entry_prices": {t: round(p, 6) for t, p in entry_prices.items()},
-            "spread": _eval_spread(b["formula"], entry_prices, all_legs),
+            "spread": _eval_spread(b["formula"], native_prices, all_legs),
             "events": c["events"], "open_legs": open_legs,
         })
 
@@ -443,7 +578,7 @@ def bundle_trades(con: sqlite3.Connection, bundle_id: int) -> dict:
         "total_commission": round(sum(c["commission"] for c in cycles), 6),
         "total_realized_net": round(sum(c["realized"] - c["commission"] for c in cycles), 6),
         "is_open": any(c["status"] == "open" for c in cycles),
-        "points_only": sorted(unconfigured),
+        "points_only": sorted(unconfigured - _forex_tickers(con)),
         "legs": legs,
         "leg_count": len(legs),
         "coverage": _formula_coverage(b["formula"], {l["ticker"] for l in legs}),

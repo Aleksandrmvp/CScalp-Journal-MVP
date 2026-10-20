@@ -141,6 +141,22 @@ CREATE TABLE IF NOT EXISTS forex_open (
     ts_open     TEXT
 );
 
+-- A cTrader trade/position placed in a bundle by hand. deal_id is the journal key ('fx:ct:<dealId>'
+-- or 'pos:<positionId>'); bundle_id NULL = taken out by the user, so the symbol rule must not
+-- attach it again.
+CREATE TABLE IF NOT EXISTS forex_bundle_member (
+    deal_id   TEXT PRIMARY KEY,
+    bundle_id INTEGER REFERENCES bundle(id) ON DELETE CASCADE
+);
+
+-- Bank of Russia rates (RUB per unit) for the forex legs: USD and CNY by day.
+CREATE TABLE IF NOT EXISTS cbr_rate (
+    day  TEXT NOT NULL,
+    code TEXT NOT NULL,
+    rate REAL NOT NULL,
+    PRIMARY KEY (day, code)
+);
+
 -- Cached official USD/RUB rate by day.
 CREATE TABLE IF NOT EXISTS fx_rate (day TEXT PRIMARY KEY, rate REAL NOT NULL);
 
@@ -265,26 +281,49 @@ def upsert(con: sqlite3.Connection, trades: list[Trade], lives: list[OrderLife],
 from datetime import datetime as _dt
 
 
+FX_KEYS = ("fx:", "pos:")      # journal keys of cTrader rows (they have no row in `trade`)
+
+
+def _split_fx(ids):
+    fx, rest = [], []
+    for i in ids or []:
+        s = str(i)
+        (fx if s.startswith(FX_KEYS) else rest).append(s)
+    return fx, rest
+
+
 def create_bundle(con, name: str, note: str | None, trade_ids: list[str]) -> int:
+    fx, rest = _split_fx(trade_ids)
     cur = con.cursor()
     cur.execute("INSERT INTO bundle(name,note,created) VALUES(?,?,?)",
                 (name, note, _dt.now().isoformat(sep=" ", timespec="seconds")))
     bid = cur.lastrowid
-    for tid in trade_ids:
+    for tid in rest:
         cur.execute("INSERT OR IGNORE INTO bundle_member(bundle_id,trade_id) VALUES(?,?)", (bid, tid))
+    for key in fx:
+        cur.execute("INSERT OR REPLACE INTO forex_bundle_member(deal_id,bundle_id) VALUES(?,?)", (key, bid))
     con.commit()
     return bid
 
 
 def add_members(con, bundle_id: int, trade_ids: list[str]) -> None:
+    fx, rest = _split_fx(trade_ids)
     cur = con.cursor()
-    for tid in trade_ids:
+    for tid in rest:
         cur.execute("INSERT OR IGNORE INTO bundle_member(bundle_id,trade_id) VALUES(?,?)", (bundle_id, tid))
+    for key in fx:
+        cur.execute("INSERT OR REPLACE INTO forex_bundle_member(deal_id,bundle_id) VALUES(?,?)",
+                    (key, bundle_id))
     con.commit()
 
 
 def remove_member(con, bundle_id: int, trade_id: str) -> None:
-    con.execute("DELETE FROM bundle_member WHERE bundle_id=? AND trade_id=?", (bundle_id, trade_id))
+    if str(trade_id).startswith(FX_KEYS):
+        # not a DELETE: the symbol rule would put the trade back into the bundle
+        con.execute("INSERT OR REPLACE INTO forex_bundle_member(deal_id,bundle_id) VALUES(?,NULL)",
+                    (str(trade_id),))
+    else:
+        con.execute("DELETE FROM bundle_member WHERE bundle_id=? AND trade_id=?", (bundle_id, trade_id))
     con.commit()
 
 

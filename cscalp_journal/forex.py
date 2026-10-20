@@ -26,6 +26,68 @@ def _fetch_rate(day: str) -> float | None:
     return None
 
 
+_FAILED: dict[str, float] = {}    # day -> time of the last failed fetch (do not hammer the CBR)
+
+
+def _fetch_rates(day: str) -> dict[str, float]:
+    """CBR rates of the day: {'USD': rub per 1 USD, 'CNY': rub per 1 CNY}; {} when unavailable."""
+    d = datetime.strptime(day, "%Y-%m-%d")
+    url = "https://www.cbr.ru/scripts/XML_daily.asp?date_req=" + d.strftime("%d/%m/%Y")
+    out: dict[str, float] = {}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"}),
+                                    timeout=8) as r:
+            root = ET.fromstring(r.read())
+        for v in root.findall("Valute"):
+            code = v.findtext("CharCode")
+            if code in ("USD", "CNY"):
+                out[code] = float(v.findtext("Value").replace(",", ".")) / float(v.findtext("Nominal") or 1)
+    except Exception:
+        return {}
+    return out if len(out) == 2 else {}
+
+
+def _save_rates(con: sqlite3.Connection, day: str, rates: dict[str, float]) -> None:
+    for code, rate in rates.items():
+        con.execute("INSERT OR REPLACE INTO cbr_rate(day,code,rate) VALUES(?,?,?)", (day, code, rate))
+    con.commit()
+
+
+def rub_rates(con: sqlite3.Connection, day: str, fetch: bool = True) -> dict[str, float]:
+    """USD and CNY rates (RUB per unit) for a forex leg. The day's own rate when cached; else it is
+    fetched (once, then stored); with no network the nearest earlier cached day within a week
+    stands in. Empty dict = no rate: the caller should skip the leg, never guess."""
+    import time
+    day = day[:10]
+    rows = {r["code"]: r["rate"] for r in con.execute("SELECT code,rate FROM cbr_rate WHERE day=?", (day,))}
+    if len(rows) == 2:
+        return rows
+    if fetch and time.time() - _FAILED.get(day, 0) > 600:
+        got = _fetch_rates(day)
+        if got:
+            _save_rates(con, day, got)
+            return got
+        _FAILED[day] = time.time()
+    near = con.execute("SELECT MAX(day) FROM cbr_rate WHERE day<? AND day>=date(?, '-7 day')", (day, day)).fetchone()[0]
+    if near:
+        return {r["code"]: r["rate"] for r in con.execute("SELECT code,rate FROM cbr_rate WHERE day=?", (near,))}
+    return {}
+
+
+def ensure_cbr_rates(con: sqlite3.Connection, limit: int = 40) -> int:
+    """Cache USD/CNY rates for the days of cTrader trades (done in the sync, off the page path)."""
+    days = {r[0] for r in con.execute("SELECT DISTINCT substr(ts_close,1,10) FROM forex_trade WHERE ts_close IS NOT NULL")}
+    days |= {r[0] for r in con.execute("SELECT DISTINCT substr(ts_open,1,10) FROM forex_open WHERE ts_open IS NOT NULL")}
+    have = {r[0] for r in con.execute("SELECT day FROM cbr_rate GROUP BY day HAVING COUNT(*)=2")}
+    fetched = 0
+    for day in sorted(days - have)[:limit]:
+        got = _fetch_rates(day)
+        if got:
+            _save_rates(con, day, got)
+            fetched += 1
+    return fetched
+
+
 def cached_rate(con: sqlite3.Connection, day: str) -> float | None:
     r = con.execute("SELECT rate FROM fx_rate WHERE day<=? ORDER BY day DESC LIMIT 1", (day,)).fetchone()
     return r["rate"] if r else None

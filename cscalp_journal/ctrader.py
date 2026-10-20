@@ -241,6 +241,7 @@ def run_sync() -> dict:
             _store_open(con, open_rows)
             # re-read a few days back next time so late-posted closings are not missed
             db.set_setting(con, "ctrader_since_ms", str(now_ms - 3 * 86400 * 1000))
+        forex.ensure_cbr_rates(con)
 
     @defer.inlineCallbacks
     def sync_account(acc):
